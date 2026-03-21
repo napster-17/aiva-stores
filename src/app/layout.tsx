@@ -6,7 +6,6 @@ import './globals.css'
 import { Toaster } from 'sonner'
 import { SupabaseProvider } from '@/components/supabase-provider'
 import NextTopLoader from 'nextjs-toploader'
-import Header from '@/components/header'
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
 import { cookies, headers as getHeaders } from 'next/headers'
 import { redirect } from 'next/navigation'
@@ -24,56 +23,41 @@ const geistMono = Geist_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   const headersList = await getHeaders()
-  const host = headersList.get('host') || ''
-  const isAdmin = host.startsWith('admin.')
 
   return {
     title: {
-      default: 'GoAiva',
-      template: '%s | GoAiva'
+      default: 'Aiva Stores | Partner Dashboard',
+      template: '%s | Aiva Stores'
     },
-    description: 'Empowering local Kirana stores with smart AI technology and fast delivery.',
-    keywords: [
-      'AIVA Stores', 'GoAiva Customer app', 'AIVA for Partners', 
-      'AIVA Partner Dashboard', 'Store Management System', 'Aiva Store Dashboard',
-      'Grocery delivery in India', 'fast delivery', 'kirana delivery', 
-      'online grocery India', 'local grocery delivery', 'GoAiva', 'Aiva Store App'
-    ],
-    metadataBase: new URL('https://www.thegoaiva.com'),
+    description: 'Manage your Kirana store, track inventory, and grow your business with Aiva Stores Partner Dashboard.',
+    metadataBase: new URL('https://www.aivastores.com'),
     alternates: {
-      canonical: 'https://www.thegoaiva.com',
+      canonical: 'https://www.aivastores.com',
     },
-    // ADDED LOGO AS FAVICON HERE
     icons: {
       icon: '/assets/logo.png',
       shortcut: '/assets/logo.png',
       apple: '/assets/logo.png',
     },
     openGraph: {
-      title: 'GoAiva - Reinventing Grocery Shopping in India',
-      description: 'Order groceries from your local AIVA Stores. Fast, reliable, and convenient.',
-      url: 'https://www.thegoaiva.com',
-      siteName: 'GoAiva',
+      title: 'Aiva Stores Partner Dashboard',
+      description: 'The most advanced digital tool for Indian Kirana stores.',
+      url: 'https://www.aivastores.com',
+      siteName: 'Aiva Stores',
       locale: 'en_IN',
       type: 'website',
       images: [
         {
-          url: '/assets/Aiva_For_Partners.jpg',
+          url: '/assets/Aiva-Partner-Dashboard-Featured-Image.png',
           width: 1200,
           height: 630,
-          alt: 'GoAiva - Local Kirana Delivery in India',
+          alt: 'Aiva Stores Partner Dashboard',
         },
       ],
     },
-    twitter: {
-      card: 'summary_large_image',
-      title: 'GoAiva - Quick Kirana Delivery',
-      description: 'Smart grocery shopping from local Kirana stores.',
-      images: ['/assets/Aiva_For_Partners.jpg'],
-    },
     robots: {
-      index: !isAdmin,
-      follow: !isAdmin,
+      index: true,
+      follow: true,
     }
   }
 }
@@ -90,13 +74,11 @@ export default async function RootLayout({
 
   const headers = await getHeaders()
   const pathname = headers.get('x-pathname') || ''
-  const host = headers.get('host') || ''
-  const isAdmin = host.startsWith('admin.thegoaiva.com')
-
-  const isPublicRoute = pathname.startsWith('/auth') || pathname.startsWith('/verify-otp')
-
-  if (isAdmin && !session && !isPublicRoute) {
-    redirect('/auth')
+  // Protect all dashboard routes
+  const isDashboardRoute = pathname.startsWith('/partners/dashboard')
+  
+  if (isDashboardRoute && !session) {
+    redirect('/partners/auth')
   }
 
   return (
@@ -108,18 +90,14 @@ export default async function RootLayout({
             __html: JSON.stringify({
               "@context": "https://schema.org",
               "@type": "WebSite",
-              "name": "GoAiva",
-              "url": "https://www.thegoaiva.com",
+              "name": "Aiva Stores",
+              "url": "https://www.aivastores.com",
               "potentialAction": {
                 "@type": "SearchAction",
-                "target": "https://www.thegoaiva.com/search?q={search_term_string}",
+                "target": "https://www.aivastores.com/search?q={search_term_string}",
                 "query-input": "required name=search_term_string"
               },
-              "hasPart": [
-                { "@type": "WebPage", "name": "About Us", "url": "https://www.thegoaiva.com/about-us" },
-                { "@type": "WebPage", "name": "Customer App", "url": "https://www.thegoaiva.com/customer" },
-                { "@type": "WebPage", "name": "Partner Program", "url": "https://www.thegoaiva.com/partner" }
-              ]
+              "description": "Digital dashboard for Aiva Partner Stores to manage billing, inventory, and analytics."
             })
           }}
         />
@@ -148,7 +126,6 @@ export default async function RootLayout({
           shadow="0 0 10px #FE8000,0 0 5px #FE8000"
         />
         <SupabaseProvider>
-          {isAdmin && <Header />}
           {children}
         </SupabaseProvider>
         <Toaster position="top-right" richColors />

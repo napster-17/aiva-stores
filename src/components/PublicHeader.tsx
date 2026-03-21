@@ -5,19 +5,11 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, Mail, Phone, HeartHandshake, ChevronDown, Smartphone, LayoutDashboard } from 'lucide-react'
+import { Menu, X, Mail, Phone, HeartHandshake, LogIn } from 'lucide-react'
 
 const navLinks = [
   { name: 'Home', href: '/' },
-  { name: 'Customer', href: '/customer' },
-  { 
-    name: 'Partner', 
-    dropdown: [
-      { name: 'Partner App', href: '/partner', icon: <Smartphone size={16} /> },
-      { name: 'Partner Dashboard', href: '/partner-dashboard', icon: <LayoutDashboard size={16} /> },
-    ]
-  },
-  { name: 'About Us', href: '/about-us' },
+  { name: 'About Us', href: 'https://www.thegoaiva.com/about-us' },
 ]
 
 export default function PublicHeader() {
@@ -34,71 +26,64 @@ export default function PublicHeader() {
 
   return (
     <>
-      <nav className={`fixed top-0 w-full z-50 transition-all duration-500 ${
+      <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${
         scrolled 
-          ? 'bg-white/95 backdrop-blur-md shadow-md py-3' 
+          ? 'bg-white/95 backdrop-blur-md shadow-sm border-b border-gray-100 py-3' 
           : 'bg-black/80 backdrop-blur-sm py-5'
       }`}>
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
             <Image 
               src="/assets/logo.png" 
               alt="GoAiva Logo" 
               width={40} 
               height={40} 
-              className="rounded-lg" 
+              className="rounded-lg shadow-sm" 
             />
           </Link>
 
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-8">
             {navLinks.map((link) => (
-              <div key={link.name} className="relative group">
-                {link.dropdown ? (
-                  <div className={`flex items-center gap-1 text-sm font-semibold cursor-default transition-colors group-hover:text-[#FE8000] ${
-                    scrolled ? 'text-gray-700' : 'text-white'
-                  }`}>
-                    {link.name} <ChevronDown size={14} className="group-hover:rotate-180 transition-transform duration-300" />
-                    
-                    {/* Dropdown Menu */}
-                    <div className="absolute top-full left-0 pt-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 transform translate-y-2 group-hover:translate-y-0">
-                      <div className="bg-white rounded-xl shadow-xl border border-gray-100 py-2 min-w-[200px] overflow-hidden">
-                        {link.dropdown.map((item) => (
-                          <Link
-                            key={item.href}
-                            href={item.href}
-                            className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 hover:text-[#FE8000] transition-colors"
-                          >
-                            <span className="text-[#FE8000]">{item.icon}</span>
-                            {item.name}
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <Link 
-                    href={link.href!}
-                    className={`text-sm font-semibold transition-colors hover:text-[#FE8000] ${
-                      pathname === link.href ? 'text-[#FE8000]' : scrolled ? 'text-gray-700' : 'text-white'
-                    }`}
-                  >
-                    {link.name}
-                  </Link>
-                )}
-              </div>
+              <Link 
+                key={link.name}
+                href={link.href}
+                target={link.name === 'About Us' ? '_blank' : '_self'}
+                className={`text-sm font-medium tracking-wide transition-colors hover:text-[#FE8000] ${
+                  pathname === link.href 
+                    ? 'text-[#FE8000]' 
+                    : scrolled ? 'text-gray-700' : 'text-gray-200'
+                }`}
+              >
+                {link.name}
+              </Link>
             ))}
+
+            {/* Login Link */}
+            <Link 
+              href="/partners/auth"
+              className={`text-sm font-semibold flex items-center gap-2 transition-colors hover:text-[#FE8000] ${
+                scrolled ? 'text-gray-700' : 'text-white'
+              }`}
+            >
+              <LogIn size={16} className="text-[#FE8000]" />
+              Login
+            </Link>
+            
             <button 
               onClick={() => setIsModalOpen(true)}
-              className="bg-[#FE8000] text-white px-6 py-2 rounded-full text-sm font-bold hover:bg-[#e67300] transition shadow-lg hover:shadow-[#FE8000]/20"
+              className="bg-[#FE8000] text-white px-6 py-2.5 rounded-full text-sm font-bold hover:bg-[#e67300] transition-all transform hover:scale-105 active:scale-95 shadow-md hover:shadow-[#FE8000]/30"
             >
               Join as Partner
             </button>
           </div>
 
           {/* Mobile Toggle */}
-          <button className={`${scrolled ? 'text-[#FE8000]' : 'text-white'} md:hidden`} onClick={() => setIsOpen(!isOpen)}>
+          <button 
+            className={`${scrolled ? 'text-[#FE8000]' : 'text-white'} md:hidden p-2`} 
+            onClick={() => setIsOpen(!isOpen)}
+          >
             {isOpen ? <X size={28} /> : <Menu size={28} />}
           </button>
         </div>
@@ -110,42 +95,36 @@ export default function PublicHeader() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="md:hidden bg-white border-b border-gray-100 overflow-hidden"
+              className="md:hidden bg-white border-b border-gray-100 overflow-hidden shadow-xl"
             >
-              <div className="flex flex-col p-6 gap-4">
+              <div className="flex flex-col p-6 gap-5">
                 {navLinks.map((link) => (
-                  <div key={link.name}>
-                    {link.dropdown ? (
-                      <div className="flex flex-col gap-3">
-                        <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">{link.name}</span>
-                        {link.dropdown.map((item) => (
-                          <Link 
-                            key={item.href} 
-                            href={item.href} 
-                            onClick={() => setIsOpen(false)}
-                            className="text-gray-700 font-medium hover:text-[#FE8000] flex items-center gap-3 pl-2"
-                          >
-                            <span className="text-[#FE8000]">{item.icon}</span>
-                            {item.name}
-                          </Link>
-                        ))}
-                      </div>
-                    ) : (
-                      <Link 
-                        href={link.href!} 
-                        onClick={() => setIsOpen(false)}
-                        className={`font-medium transition-colors ${
-                          pathname === link.href ? 'text-[#FE8000]' : 'text-gray-700'
-                        }`}
-                      >
-                        {link.name}
-                      </Link>
-                    )}
-                  </div>
+                  <Link 
+                    key={link.name} 
+                    href={link.href} 
+                    target={link.name === 'About Us' ? '_blank' : '_self'}
+                    onClick={() => setIsOpen(false)}
+                    className={`font-semibold text-lg ${
+                      pathname === link.href ? 'text-[#FE8000]' : 'text-gray-800'
+                    }`}
+                  >
+                    {link.name}
+                  </Link>
                 ))}
+                
+                {/* Mobile Login */}
+                <Link 
+                  href="/partners/auth"
+                  onClick={() => setIsOpen(false)}
+                  className="font-semibold text-lg text-gray-800 flex items-center gap-2 border-t border-gray-50 pt-4"
+                >
+                  <LogIn size={20} className="text-[#FE8000]" />
+                  Partner Login
+                </Link>
+
                 <button 
                   onClick={() => { setIsOpen(false); setIsModalOpen(true); }}
-                  className="bg-[#FE8000] text-white p-3 rounded-xl font-bold text-center"
+                  className="bg-[#FE8000] text-white p-4 rounded-2xl font-bold text-center shadow-lg active:scale-95 transition-transform"
                 >
                   Join as Partner
                 </button>
@@ -177,16 +156,16 @@ export default function PublicHeader() {
                   <HeartHandshake size={32} />
                 </div>
                 <h3 className="text-2xl font-bold">Become a Partner</h3>
-                <p className="text-white/80 mt-2">Grow your Kirana business with GoAiva</p>
+                <p className="text-white/80 mt-2">Grow your Kirana business with Aiva Stores</p>
               </div>
               
-              <div className="p-8 space-y-6">
+              <div className="p-8 space-y-4">
                 <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100">
                   <div className="w-10 h-10 bg-[#FE8000]/10 rounded-full flex items-center justify-center text-[#FE8000]">
                     <Mail size={20} />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Email Us</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">Email Us</p>
                     <a href="mailto:info@thegoaiva.com" className="text-gray-800 font-semibold hover:text-[#FE8000]">info@thegoaiva.com</a>
                   </div>
                 </div>
@@ -196,14 +175,14 @@ export default function PublicHeader() {
                     <Phone size={20} />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Call Us</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">Call Us</p>
                     <a href="tel:+918879316037" className="text-gray-800 font-semibold hover:text-[#FE8000]">+91 8879316037</a>
                   </div>
                 </div>
 
                 <button 
                   onClick={() => setIsModalOpen(false)}
-                  className="w-full py-4 text-gray-500 font-medium hover:text-gray-800 transition"
+                  className="w-full py-4 text-gray-400 font-medium hover:text-gray-600 transition text-sm"
                 >
                   Close
                 </button>
