@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/supabaseClient'
 import { useRouter, useSearchParams } from 'next/navigation' 
+import Image from 'next/image'
 import { UserRoundX } from 'lucide-react'
 import { useEffect, useState, Suspense } from 'react'
 
@@ -71,21 +72,40 @@ function AuthContent() {
   }
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-50 px-4">
-      <form onSubmit={handleLogin} className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Partner Dashboard</h1>
+    <div 
+      className="flex justify-center items-center min-h-screen px-4"
+      style={{ 
+        backgroundImage: "url('/assets/Aiva-Auth-Bg.png')",
+        backgroundRepeat: 'repeat',
+        backgroundSize: 'auto' 
+      }}
+    >
+      <form onSubmit={handleLogin} className="bg-white/95 backdrop-blur-sm p-8 rounded-3xl shadow-2xl w-full max-w-sm space-y-6 border border-white">
+      <div className="text-center">
+        <div className="flex justify-center mb-4">
+          <Image 
+            src="/assets/logo.png" 
+            alt="Aiva Logo" 
+            width={60} 
+            height={60} 
+            className="rounded-xl shadow-sm"
+          />
+        </div>
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight">Partner Dashboard</h1>
           <p className="text-gray-500 mt-2">Enter your email to manage your store</p>
         </div>
 
-        <input
-          type="email"
-          placeholder="store-owner@email.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#FF8500] outline-none"
-        />
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Business Email</label>
+          <input
+            type="email"
+            placeholder="store-owner@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="w-full p-3.5 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-[#FF8500] focus:border-transparent outline-none bg-gray-50/50 transition-all"
+          />
+        </div>
 
         <button
           type="submit"

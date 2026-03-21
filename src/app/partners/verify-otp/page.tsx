@@ -3,6 +3,7 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import { createClient } from '@/lib/supabase/supabaseClient'
+import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 function VerifyOTPContent() {
@@ -50,28 +51,50 @@ function VerifyOTPContent() {
   }
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-50 px-4">
-      <form onSubmit={handleVerify} className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm space-y-6">
+    <div 
+      className="flex justify-center items-center min-h-screen px-4"
+      style={{ 
+        backgroundImage: "url('/assets/Aiva-Auth-Bg.png')",
+        backgroundRepeat: 'repeat',
+        backgroundSize: 'auto' 
+      }}
+    >
+      <form onSubmit={handleVerify} className="bg-white/95 backdrop-blur-sm p-8 rounded-3xl shadow-2xl w-full max-w-sm space-y-8 border border-white">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Verify OTP</h1>
-          <p className="text-gray-500 mt-2">Sent to {email}</p>
+          <div className="flex justify-center mb-4">
+            <Image 
+              src="/assets/logo.png" 
+              alt="Aiva Logo" 
+              width={60} 
+              height={60} 
+              className="rounded-xl shadow-sm"
+            />
+          </div>
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Security Check</h1>
+          <p className="text-gray-500 mt-2 text-sm italic">Sent to {email}</p>
         </div>
 
-        <input
-          type="text"
-          placeholder="6-digit code"
-          value={otp}
-          onChange={(e) => setOtp(e.target.value)}
-          required
-          className="w-full p-3 border border-gray-300 rounded-xl text-center text-2xl tracking-widest focus:ring-2 focus:ring-[#FF8500] outline-none"
-        />
+        <div className="space-y-3">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-[0.2em] block text-center">Verification Code</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="······"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+            required
+            autoFocus
+            className="w-full p-4 border border-gray-200 rounded-2xl text-center text-2xl tracking-[0.5em] font-medium text-slate-700 focus:ring-2 focus:ring-[#FF8500] focus:border-transparent outline-none bg-gray-50/30 transition-all placeholder:text-gray-300 shadow-sm"
+          />
+        </div>
 
         <button
           type="submit"
-          disabled={loading}
-          className="w-full bg-black text-white py-3 rounded-xl font-semibold hover:bg-gray-800 transition-colors disabled:opacity-50"
+          disabled={loading || otp.length < 6}
+          className="w-full bg-[#FF8500] text-white py-4 rounded-2xl font-bold shadow-lg shadow-orange-200 hover:bg-[#e67700] transition-all disabled:opacity-50 disabled:grayscale"
         >
-          {loading ? 'Verifying...' : 'Login'}
+          {loading ? 'Checking OTP...' : 'Confirm & Login'}
         </button>
 
         {errorMsg && <p className="text-sm text-center text-red-500 font-medium">{errorMsg}</p>}

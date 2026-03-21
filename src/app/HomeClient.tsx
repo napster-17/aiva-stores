@@ -16,7 +16,7 @@ const showcaseItems = [
     id: 'dashboard',
     title: 'Command Center',
     icon: <LayoutDashboard size={20} />,
-    desc: 'Get a 360° view of your business. Monitor stock-outs, live sales, and real-time online order notifications in one unified screen.',
+    desc: 'Get a 360° view of your business. Monitor out of stock items, live sales, and real-time online order notifications in one unified screen.',
     image: '/assets/Aiva-Partner-Dashboard-Featured-Image.png'
   },
   {
@@ -105,7 +105,7 @@ export default function HomeClient() {
         <div className="max-w-7xl mx-auto">
           <div className="grid md:grid-cols-3 gap-12">
             {[
-              { icon: <Smartphone size={28} />, title: "Paperless Billing", desc: "Ditch the thermal printer. Send professional invoices via WhatsApp and track payments digitally." },
+              { icon: <Smartphone size={28} />, title: "Paperless Billing", desc: "Ditch the expensive billing software. Send professional invoices via WhatsApp and track payments digitally." },
               { icon: <CheckCircle2 size={28} />, title: "Live Stock Sync", desc: "Auto-sync your online store and physical shop inventory. Never sell an out-of-stock item again." },
               { icon: <Wallet size={28} />, title: "Integrated Ledger", desc: "Manage withdrawals, deposits, and agent settlements with full CSV export capabilities." }
             ].map((item, idx) => (
@@ -158,9 +158,9 @@ export default function HomeClient() {
                   <h3 className="text-3xl font-bold mb-6 text-gray-900">{activeTab.title}</h3>
                   <p className="text-lg text-gray-600 mb-8 leading-relaxed">{activeTab.desc}</p>
                   <ul className="space-y-4">
-                    {activeTab.id === 'dashboard' && ['Stock-out alerts', 'Real-time notifications', 'Daily sales tracking'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
+                    {activeTab.id === 'dashboard' && ['Out of stock alerts', 'Real-time notifications', 'Daily sales tracking'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
                     {activeTab.id === 'billing' && ['WhatsApp Invoicing', 'Udhaar Tracking', 'Multi-mode payment'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
-                    {activeTab.id === 'inventory' && ['10,000+ Global Catalog', 'Margin analysis', 'Bulk stock update'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
+                    {activeTab.id === 'inventory' && ['In-built global catalog', 'Add custom products', 'Margin analysis', 'Bulk stock update'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
                     {activeTab.id === 'analytics' && ['Peak time heatmaps', 'Retention metrics', 'Profit tracking'].map(li => <li key={li} className="flex items-center gap-3 font-semibold text-gray-700"><CheckCircle2 className="text-[#FE8000]" size={18}/> {li}</li>)}
                   </ul>
                 </motion.div>
