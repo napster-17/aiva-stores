@@ -3,25 +3,23 @@
 import React, { useState } from 'react'
 import Image from 'next/image'
 import { motion, AnimatePresence } from 'framer-motion'
-import { 
-  LayoutDashboard, ReceiptIndianRupee, PackageSearch, Wallet, 
+import { LayoutDashboard, ReceiptIndianRupee, PackageSearch, Wallet, 
   Users, BarChart3, ArrowRight, CheckCircle2, Zap, 
-  ShoppingBag, Store, Smartphone, MessageSquare 
-} from 'lucide-react'
+  ShoppingBag, Store, Smartphone, MessageSquare, ChevronDown } from 'lucide-react'
 import PublicHeader from '@/components/PublicHeader'
 import Footer from '@/components/Footer'
 
 const showcaseItems = [
   {
     id: 'dashboard',
-    title: 'Command Center',
+    title: 'Smart Dashboard',
     icon: <LayoutDashboard size={20} />,
     desc: 'Get a 360° view of your business. Monitor out of stock items, live sales, and real-time online order notifications in one unified screen.',
     image: '/assets/Aiva-Partner-Dashboard-Featured-Image.png'
   },
   {
     id: 'billing',
-    title: 'Smart Billing',
+    title: 'Quick Billing',
     icon: <ReceiptIndianRupee size={20} />,
     desc: 'Replace expensive hardware. Generate WhatsApp invoices, track UPI/Cash/Credit payments, and manage "Udhaar" without a single sheet of paper.',
     image: '/assets/aiva-partner-dashboard-walkin-billing.png'
@@ -51,7 +49,7 @@ export default function HomeClient() {
       <PublicHeader />
 
       {/* 1. Modern Hero Section */}
-      <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-[#fffaf5]">
+      <section className="relative pt-24 pb-20 lg:pt-32 lg:pb-32 min-h-[100vh] flex flex-col justify-center overflow-hidden bg-[#fffaf5]">
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="text-center max-w-4xl mx-auto">
             <motion.div
@@ -59,7 +57,7 @@ export default function HomeClient() {
               animate={{ opacity: 1, y: 0 }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FE8000]/10 border border-[#FE8000]/20 text-[#FE8000] text-sm font-bold mb-8"
             >
-              <Store size={16} /> Trusted by 500+ Local Partners
+              <Store size={16} /> Trusted by Local Kirana Stores
             </motion.div>
             <motion.h1 
               initial={{ opacity: 0, y: 20 }}
@@ -98,6 +96,25 @@ export default function HomeClient() {
         </div>
         {/* Decorative background elements */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#FE8000]/5 via-transparent to-transparent -z-0" />
+
+        {/* Animated Scroll Down Indicator */}
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1, duration: 1 }}
+          className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 hidden md:flex flex-col items-center gap-2 cursor-pointer"
+          onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
+        >
+          <span className="text-[10px] font-bold text-[#FE8000] uppercase tracking-[0.2em]">Explore</span>
+          <motion.div
+            animate={{ y: [0, 8, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+            className="w-8 h-12 border-2 border-[#FE8000]/30 rounded-full flex justify-center p-1"
+          >
+            <div className="w-1 h-2 bg-[#FE8000] rounded-full mt-1" />
+          </motion.div>
+          <ChevronDown size={20} className="text-[#FE8000] animate-pulse" />
+        </motion.div>
       </section>
 
       {/* 2. Key Value Props - Grid */}

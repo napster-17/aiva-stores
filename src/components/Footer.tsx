@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { MapPin, Store, Smartphone } from 'lucide-react'
+import { MapPin, Store, Users, Handshake, ExternalLink } from 'lucide-react'
 
 export default function Footer() {
   return (
@@ -38,15 +38,36 @@ export default function Footer() {
                   target="_blank" 
                   className="text-gray-600 hover:text-[#FE8000] transition-colors flex items-center gap-2 text-xs"
                 >
-                  <Smartphone size={14} /> Customer App
+                  <Users size={14} /> Customer App
                 </a>
                 <a 
                   href="https://www.thegoaiva.com/partner" 
                   target="_blank" 
                   className="text-gray-600 hover:text-[#FE8000] transition-colors flex items-center gap-2 text-xs"
                 >
-                  <Smartphone size={14} /> Partner App
+                  <Handshake size={14} /> Partner App
                 </a>
+
+                {/* Aiva Website Link */}
+                <div className="pt-2 mt-1 border-t border-gray-200/50">
+                  <a 
+                    href="https://www.thegoaiva.com/" 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 group mt-2"
+                  >
+                    <Image 
+                      src="/assets/aiva-logo.png" 
+                      alt="Aiva" 
+                      width={18} 
+                      height={18} 
+                      className="rounded shadow-sm group-hover:scale-110 transition-transform"
+                    />
+                    <span className="bg-white border border-[#FE8000]/20 text-[#FE8000] px-2 py-1 rounded-md text-[11px] tracking-normal font-bold group-hover:bg-[#FE8000] group-hover:text-white transition-all flex items-center gap-1">
+                      Visit Website <ExternalLink size={10} />
+                    </span>
+                  </a>
+                </div>
               </nav>
             </div>
 
