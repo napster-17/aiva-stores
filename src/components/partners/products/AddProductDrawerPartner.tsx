@@ -1,4 +1,5 @@
 //src/components/partners/AddProductDrawerPartner.tsx
+//Updated with concurrency
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -11,6 +12,8 @@ import { uploadProductImage } from '@/lib/partners/product-upload';
 import { Plus, ImagePlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePartnerProfile } from '../PartnerProfileProvider';
+import { chunkArray } from '@/utils/chunkArray';
+import pLimit from 'p-limit';
 
 const UNIT_TYPES = ['pack', 'loose'];
 const UNIT_METRICS = ['kg', 'gms', 'litre', 'ml', 'pcs', 'nos'];
@@ -156,8 +159,11 @@ export default function AddProductDrawerPartner({ isOpen, onClose, onSuccess }: 
     });
   };
 
+  const CHUNK_SIZE = 100;
+
   const handleBulkAdd = async () => {
     setLoading(true);
+
     const itemsToInsert = Array.from(selectedItems.values()).map(item => ({
       global_product_id: item.id,
       name: item.name,
@@ -165,7 +171,7 @@ export default function AddProductDrawerPartner({ isOpen, onClose, onSuccess }: 
       cost_price: item.cost || 0,
       stock_quantity: item.qty || 0,
       image_url: item.image_url,
-      category_id: item.category_id || null, 
+      category_id: item.category_id || null,
       unit_type: item.unit_type || null,
       unit_metric: item.unit_metric || null,
       unit_value: item.unit_value || 0,
@@ -173,21 +179,33 @@ export default function AddProductDrawerPartner({ isOpen, onClose, onSuccess }: 
       store_id: storeId
     }));
 
-    try {
-      const response = await fetch('/api/partners/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'bulk_insert', data: itemsToInsert })
-      });
+    const chunks = chunkArray(itemsToInsert, CHUNK_SIZE);
+    const limit = pLimit(3);
 
-      if (!response.ok) throw new Error('Failed to import');
+    try {
+      const tasks = chunks.map((chunk, i) =>
+        limit(async () => {
+          const response = await fetch('/api/partners/products', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'bulk_insert', data: chunk })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Chunk ${i + 1} failed`);
+          }
+        })
+      );
+
+      await Promise.all(tasks);
 
       toast.success(`Successfully added ${itemsToInsert.length} products`);
       onSuccess();
       onClose();
       setSelectedItems(new Map());
+
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Bulk import failed");
     } finally {
       setLoading(false);
     }
@@ -203,13 +221,27 @@ export default function AddProductDrawerPartner({ isOpen, onClose, onSuccess }: 
 
     setLoading(true);
     try {
-      const response = await fetch('/api/partners/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'manual_bulk_insert', data: { products: manualRows } })
-      });
+      const chunks = chunkArray(manualRows, 50);
+      const limit = pLimit(3);
 
-      if (!response.ok) throw new Error('Failed to save manual products');
+      const tasks = chunks.map((chunk, i) =>
+        limit(async () => {
+          const response = await fetch('/api/partners/products', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'manual_bulk_insert',
+              data: { products: chunk }
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Manual chunk ${i + 1} failed`);
+          }
+        })
+      );
+
+      await Promise.all(tasks);
 
       toast.success("Products added successfully");
       onSuccess();

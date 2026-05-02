@@ -3,9 +3,9 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { MapPin, Store, Users, Handshake, ExternalLink } from 'lucide-react'
+import { MapPin, Store, Users, Handshake, ExternalLink, MonitorDown } from 'lucide-react'
 
-export default function Footer() {
+export default function Footer({ onInstall }: { onInstall: (() => void) | null }) {
   return (
     <>
       <motion.footer
@@ -88,6 +88,20 @@ export default function Footer() {
                   className="rounded shadow-sm border border-gray-200" 
                 />
               </a>
+              {onInstall && (
+                <button 
+                  onClick={onInstall}
+                  className="mt-4 flex items-center gap-3 bg-white border border-gray-200 p-2 rounded-md hover:border-[#FE8000]/40 transition-all group w-full max-w-[140px]"
+                >
+                  <div className="bg-gray-900 text-white p-1.5 rounded-md group-hover:bg-[#FE8000] transition-colors">
+                    <MonitorDown size={16} />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-[9px] uppercase font-bold text-gray-400 leading-none">Download</p>
+                    <p className="text-[11px] font-bold text-gray-900 pt-0.5 leading-none mt-0.5">Desktop App</p>
+                  </div>
+                </button>
+              )}
             </div>
 
             {/* Column 4: Login & Contact */}

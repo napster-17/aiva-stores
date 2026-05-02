@@ -1,4 +1,5 @@
-//src/app/partners/dashboard/walkin-billing/page.tsx
+//src/app/partners/dashboard/walkin-billing/page.tsx: Updated with fixed sidebar, only 3 cards when the right side tray opens, and safety check for the images from unknown sources.
+//Updated with Virualization using react-virtuoso and dynamic column count based on screen size and cart state.
 'use client'
 import React, { useState, useEffect, useMemo } from 'react'
 import Image from 'next/image'
@@ -12,6 +13,9 @@ import { generateAndUploadInvoice } from '@/lib/partners/walkin-billing/pdf-serv
 import { usePartnerProfile } from '@/components/partners/PartnerProfileProvider'
 import ProductCard from '@/components/partners/walkin-billing/ProductCard'
 import InvoiceDialog from '@/components/partners/walkin-billing/InvoiceDialog'
+import { Virtuoso } from 'react-virtuoso'
+import BillingRow from '@/components/partners/walkin-billing/BillingRow'
+import { buildBillingRows } from '@/utils/buildBillingRows'
 
 interface Product {
   id: string; name: string; price: number; stock_quantity: number; frozen_quantity: number; image_url?: string | null; 
@@ -40,6 +44,7 @@ export default function WalkinBillingPage() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Cards' | 'Credit'>('Cash')
+  const [columns, setColumns] = useState(6)
 
   // Fetch Products
   useEffect(() => {
@@ -60,13 +65,21 @@ export default function WalkinBillingPage() {
         supabase
           .from('global_categories')
           .select('name, image_url')
+          .order('name', { ascending: true })
       ])
 
       if (prodRes.data) {
-        setProducts(prodRes.data.map((p: any) => ({
-          ...p,
-          category_name: p.global_categories?.name || 'Others'
-        })))
+        const processedProducts = prodRes.data.map((p: any) => {
+          // Safety check: If image is from a known problematic source, use fallback until fixed
+          const isExternal = p.image_url?.includes('gstatic.com') || p.image_url?.includes('google');
+          
+          return {
+            ...p,
+            image_url: isExternal ? '/assets/product_fallback.jpg' : p.image_url,
+            category_name: p.global_categories?.name || 'Others'
+          };
+        });
+        setProducts(processedProducts);
       }
 
       if (catRes.data) {
@@ -141,6 +154,10 @@ export default function WalkinBillingPage() {
 
     return fuse.search(finalSearchQuery).map(result => result.item);
   }, [searchTerm, products, selectedCategory]);
+
+  const rows = useMemo(() => {
+    return buildBillingRows(filteredProducts, columns)
+  }, [filteredProducts, columns])
 
   const cartItems = Object.values(cart)
   const totalAmount = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0)
@@ -220,65 +237,74 @@ export default function WalkinBillingPage() {
     }
   };
 
+  useEffect(() => {
+    const updateColumns = () => {
+      const width = window.innerWidth
+
+      if (cartItems.length > 0) {
+        if (width < 640) setColumns(1)
+        else if (width < 1024) setColumns(2)
+        else setColumns(3)
+      } else {
+        if (width < 640) setColumns(2)
+        else if (width < 768) setColumns(3)
+        else if (width < 1024) setColumns(4)
+        else if (width < 1280) setColumns(5)
+        else setColumns(6)
+      }
+    }
+
+    updateColumns()
+    window.addEventListener('resize', updateColumns)
+    return () => window.removeEventListener('resize', updateColumns)
+  }, [cartItems.length])
+
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-orange-500" size={40} /></div>
 
   return (
-    <div className="flex h-screen bg-[#F8F9FB] text-gray-900 overflow-hidden">
-      {/* 1. Left Vertical Category Sidebar (Refined & Minimal) */}
-      <aside className="w-24 hover:w-64 transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col pt-[104px] pb-8 z-30 group/sidebar">
-        <div className="flex-1 overflow-y-auto no-scrollbar px-3">
-          {/* Subtle container for categories to scroll within */}
-          <div className="bg-white/40 backdrop-blur-sm rounded-[24px] py-3 flex flex-col gap-1 border border-white/50 shadow-sm">
-            {activeCategories.map((cat) => (
-              <button
-                key={cat.name}
-                onClick={() => setSelectedCategory(cat.name)}
-                className={`flex flex-col group-hover/sidebar:flex-row items-center py-2 px-3 mx-2 rounded-2xl transition-all duration-300 gap-0 group-hover/sidebar:gap-4 ${
-                  selectedCategory === cat.name 
-                    ? 'bg-white shadow-md ring-1 ring-black/[0.03]' 
-                    : 'hover:bg-white/60'
-                }`}
-              >
-                <div className="relative w-10 h-10 flex-shrink-0">
-                  {cat.name === 'All' ? (
-                    <div className={`w-full h-full rounded-lg flex items-center justify-center transition-all ${
-                      selectedCategory === 'All' 
-                        ? 'bg-orange-500 text-white shadow-lg shadow-orange-100' 
-                        : 'bg-gray-100/50 text-gray-400'
-                    }`}>
-                      <Package size={18} />
-                    </div>
-                  ) : (
-                    /* The "Frame" with very small padding as requested */
-                    <div className={`w-full h-full rounded-lg p-0.5 transition-all ${
-                      selectedCategory === cat.name 
-                        ? 'bg-orange-100/50' 
-                        : 'bg-gray-100/30'
-                    }`}>
-                      <div className="relative w-full h-full rounded-[12px] overflow-hidden shadow-inner bg-white">
-                        <Image
-                          src={cat.image_url || '/assets/product_fallback.jpg'}
-                          alt={cat.name}
-                          fill
-                          className="object-cover p-0.5"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <span className={`
-                  text-[9px] group-hover/sidebar:text-sm 
-                  text-center group-hover/sidebar:text-left 
-                  font-bold leading-tight uppercase 
-                  tracking-tight group-hover/sidebar:tracking-wider 
-                  transition-all duration-300
-                  ${selectedCategory === cat.name ? 'text-orange-600' : 'text-gray-400 group-hover/sidebar:text-gray-600'}
-                `}>
-                  {cat.name}
-                </span>
-              </button>
-            ))}
-          </div>
+    <div className="flex h-screen bg-[#F8F9FB] text-gray-900 overflow-hidden gap-1">
+      {/* 1. Fixed Category Sidebar (Unified Design) */}
+      <aside className="w-52 flex-shrink-0 flex flex-col sticky top-0 h-screen pt-24 pb-8 z-30 ml-4">
+        <div className="bg-white/80 backdrop-blur-md rounded-3xl py-4 flex flex-col gap-1 border border-gray-100 shadow-xl max-h-full overflow-y-auto custom-scrollbar">
+          {activeCategories.map((cat) => (
+            <button
+              key={cat.name}
+              onClick={() => setSelectedCategory(cat.name)}
+              className={`flex items-center py-3 px-3 mx-2 rounded-2xl transition-all duration-200 gap-3 ${
+                selectedCategory === cat.name 
+                  ? 'bg-white shadow-md ring-1 ring-black/[0.03]' 
+                  : 'hover:bg-white/80'
+              }`}
+            >
+              <div className="relative w-12 h-12 flex-shrink-0">
+                {cat.name === 'All' ? (
+                  <div className={`w-full h-full rounded-lg flex items-center justify-center transition-all ${
+                    selectedCategory === 'All' 
+                      ? 'bg-orange-500 text-white shadow-lg shadow-orange-200' 
+                      : 'bg-gray-100 text-gray-400'
+                  }`}>
+                    <Package size={24} />
+                  </div>
+                ) : (
+                  <div className={`w-full h-full rounded-lg p-1 transition-all ${
+                    selectedCategory === cat.name ? 'bg-orange-100' : 'bg-gray-100'
+                  }`}>
+                    <img
+                      src={cat.image_url || '/assets/product_fallback.jpg'}
+                      alt={cat.name}
+                      className="w-full h-full object-cover rounded-md"
+                    />
+                  </div>
+                )}
+              </div>
+              <span className={`
+                text-[14px] text-left font-semibold leading-tight transition-all duration-200
+                ${selectedCategory === cat.name ? 'text-orange-600' : 'text-gray-500'}
+              `}>
+                {cat.name}
+              </span>
+            </button>
+          ))}
         </div>
       </aside>
 
@@ -318,12 +344,19 @@ export default function WalkinBillingPage() {
         {/* Seamless Grid Container */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           {filteredProducts.length > 0 ? (
-            <div className={`grid gap-6 ${
-              cartItems.length > 0 ? 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6'
-            }`}>
-              {filteredProducts.map(p => (
-                <ProductCard key={p.id} product={p} onAddToCart={handleAddToCart} quantityInCart={cart[p.id]?.quantity || 0} />
-              ))}
+            <div style={{ height: '100%' }}>
+              <Virtuoso
+                data={rows}
+                overscan={200}
+                itemContent={(index, row) => (
+                  <BillingRow
+                    row={row}
+                    onAddToCart={handleAddToCart}
+                    cart={cart}
+                    columns={columns}
+                  />
+                )}
+              />
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-gray-300 bg-white/50 rounded-[32px] border-2 border-dashed border-gray-100">
@@ -336,7 +369,7 @@ export default function WalkinBillingPage() {
 
       {/* 3. Floating-style Cart Sidebar */}
       {cartItems.length > 0 && (
-        <div className="w-[400px] flex flex-col bg-white/70 backdrop-blur-xl rounded-xl border-l border-white/20 animate-in slide-in-from-right duration-500">
+        <div className="w-80 lg:w-90 flex flex-shrink-0 flex-col bg-white/80 backdrop-blur-xl border-l border-gray-200 animate-in slide-in-from-right duration-500 z-40">
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
@@ -398,11 +431,11 @@ export default function WalkinBillingPage() {
             {showSuggestions && <div className="fixed inset-0 z-[90]" onClick={() => setShowSuggestions(false)} />}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
             {cartItems.map(item => (
               <div key={item.id} className="flex gap-4 items-start group">
                 {/* Product Image */}
-                <div className="relative w-12 h-12 bg-gray-50 rounded-lg flex-shrink-0 overflow-hidden border border-gray-100">
+                <div className="relative w-14 h-14 bg-gray-50 rounded-lg flex-shrink-0 overflow-hidden border border-gray-100">
                   <Image 
                     src={item.image_url || '/assets/product_fallback.jpg'}
                     alt={item.name} 
@@ -453,7 +486,7 @@ export default function WalkinBillingPage() {
             ))}
           </div>
 
-          <div className="px-6 py-2 bg-white border-t border-gray-100">
+          <div className="px-4 py-4 bg-white border-t border-gray-100">
             {/* Payment Method Selector Heading */}
             <div className="flex items-center justify-between mb-1 px-1">
               <h3 className="text-[12px] font-bold font-black uppercase text-orange-400">Payment Mode</h3>

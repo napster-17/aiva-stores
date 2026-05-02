@@ -1,10 +1,7 @@
 //src/app/partners/dashboard/walkin-billing/history/page.tsx
 'use client'
 import React, { useState, useEffect, useCallback } from 'react'
-import { 
-  ChevronLeft, Clock, Phone, 
-  Printer, Loader2, FileText, Filter 
-} from 'lucide-react'
+import { ChevronLeft, Clock, Phone, Printer, Loader2, FileText, Filter } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { usePartnerProfile } from '@/components/partners/PartnerProfileProvider'

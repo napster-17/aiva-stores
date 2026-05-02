@@ -1,7 +1,10 @@
-//src/app/partners/dashboard/products/page.tsx
+//src/app/partners/dashboard/products/page.tsx: Updated with search, fixed category, and category sorting
+//updated with virtualiztaion & memoization & bulk API/batching
+//updated with debounce search, fallback, optimistic UI, concurrency
+//removed undo + retry logic for simplicity since undo was not working due to hard delete and retry had potential to cause race conditions and indempotency
 'use client'
 import React, { useState, useEffect } from 'react'
-import { Plus, Package, Trash2, PackageCheck, Loader2, ChevronDown, ChevronRight, Tag, Layers, Search, X } from 'lucide-react'
+import { Plus, Package, Trash2, PackageCheck, Loader2, ChevronDown, ChevronRight, Tag, Layers, Search, X, PackageX } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import Fuse from 'fuse.js'
@@ -11,6 +14,10 @@ import { Input } from '@/components/input'
 import { TableSkeleton } from '@/components/partners/TableSkeleton'
 import AddProductDrawerPartner from '@/components/partners/products/AddProductDrawerPartner'
 import StoreDiscountModal from '@/components/partners/products/StoreDiscountModal'
+import { ProductRow } from '@/components/partners/products/ProductRow'
+import { Virtuoso } from 'react-virtuoso'
+import { buildRows } from '@/utils/buildProductRows'
+import pLimit from 'p-limit'
 
 export default function PartnerProductManager() {
   const { profile } = usePartnerProfile()
@@ -30,6 +37,7 @@ export default function PartnerProductManager() {
   const [storeDiscounts, setStoreDiscounts] = useState<any[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
 
   const fetchStoreDiscounts = async () => {
     if (!profile?.id) return
@@ -54,6 +62,7 @@ export default function PartnerProductManager() {
       supabase
         .from('global_categories')
         .select('name, image_url')
+        .order('name', { ascending: true })
     ])
     if (!prodRes.error) {
       const fetchedProducts = prodRes.data || []
@@ -74,6 +83,14 @@ export default function PartnerProductManager() {
     fetchInventory()
     fetchStoreDiscounts()
   }, [profile])
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(searchQuery)
+    }, 300)
+
+    return () => clearTimeout(t)
+  }, [searchQuery])
 
   const toggleParent = (id: string) => {
     const next = new Set(expandedParents)
@@ -110,9 +127,11 @@ export default function PartnerProductManager() {
           } 
         })
       })
-      if (!res.ok) throw new Error('Update failed')
+
+      if (!res.ok) throw new Error()
+
       toast.success('Product updated')
-    } catch (err) {
+    } catch {
       toast.error('Failed to update')
     } finally {
       setUpdatingId(null)
@@ -124,28 +143,48 @@ export default function PartnerProductManager() {
     if (productsToUpdate.length === 0) return
 
     setUpdatingId('bulk')
+
     try {
-      const promises = productsToUpdate.map(product => 
-        fetch('/api/partners/products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            action: 'update', 
-            id: product.id, 
-            data: { 
-              price: Number(product.price),
-              cost_price: Number(product.cost_price),
-              stock_quantity: Number(product.stock_quantity),
-              discount_value: Number(product.discount_value || 0),
-              discount_type: 'flat'
-            } 
+      const CHUNK_SIZE = 100
+
+      const limit = pLimit(3);
+
+      const tasks = [];
+
+      for (let i = 0; i < productsToUpdate.length; i += CHUNK_SIZE) {
+        const chunk = productsToUpdate.slice(i, i + CHUNK_SIZE)
+
+        const payload = chunk.map(product => ({
+          id: product.id,
+          price: Number(product.price),
+          cost_price: Number(product.cost_price),
+          stock_quantity: Number(product.stock_quantity),
+          discount_value: Number(product.discount_value || 0),
+          discount_type: 'flat',
+          discount_id: product.discount_id
+        }))
+
+        tasks.push(
+          limit(async () => {
+            const res = await fetch('/api/partners/products', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'bulk_update',
+                data: payload
+              })
+            })
+
+            if (!res.ok) throw new Error('Chunk failed')
           })
-        })
-      )
-      await Promise.all(promises)
+        )
+      }
+
+      await Promise.all(tasks)
+
       toast.success(`Updated ${productsToUpdate.length} products`)
       setEditedIds(new Set())
-    } catch (err) {
+    } catch {
       toast.error('Bulk update failed')
     } finally {
       setUpdatingId(null)
@@ -154,37 +193,63 @@ export default function PartnerProductManager() {
 
   const deleteProduct = async (id: string) => {
     if (!confirm('Are you sure you want to delete this product?')) return
+
+    const prevProducts = [...products]
+    const deletedProduct = products.find(p => p.id === id)
+
+    // Optimistic UI
+    setProducts(prev => prev.filter(p => p.id !== id))
+
     try {
-        const res = await fetch('/api/partners/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', id })
-        })
-        if (!res.ok) throw new Error()
-        toast.success('Product removed')
-        fetchInventory()
-    } catch (err) {
-        toast.error('Failed to delete')
+    const res = await fetch('/api/partners/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id })
+    })
+
+    if (!res.ok) throw new Error()
+
+    toast.success('Product deleted')
+
+    } catch {
+      setProducts(prevProducts) // rollback
+      toast.error('Delete failed. Please try again.')
     }
   }
 
   const handleBulkDelete = async () => {
     if (!confirm(`Are you sure you want to delete ${selectedIds.size} products?`)) return
+
+    const ids = Array.from(selectedIds)
+    const prevProducts = [...products]
+
     setUpdatingId('bulk-delete')
+
+    // Optimistic UI
+    setProducts(prev => prev.filter(p => !ids.includes(p.id)))
+    setSelectedIds(new Set())
+
     try {
-      const promises = Array.from(selectedIds).map(id =>
-        fetch('/api/partners/products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'delete', id })
+    const CHUNK_SIZE = 100
+
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE)
+
+      const res = await fetch('/api/partners/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'bulk_delete',
+          data: chunk
         })
-      )
-      await Promise.all(promises)
-      toast.success(`Deleted ${selectedIds.size} products`)
-      setSelectedIds(new Set())
-      fetchInventory()
-    } catch (err) {
-      toast.error('Bulk delete failed')
+      })
+
+      if (!res.ok) throw new Error()
+    }
+
+    } catch {
+      setProducts(prevProducts)
+      toast.error('Bulk delete failed. Retrying might help.')
     } finally {
       setUpdatingId(null)
     }
@@ -195,10 +260,19 @@ export default function PartnerProductManager() {
       toast.error('Please save or discard your changes before selecting items');
       return;
     }
-    if (selectedIds.size === products.length) {
-      setSelectedIds(new Set())
+
+    const allVisibleSelected = visibleProductIds.every(id => selectedIds.has(id))
+
+    if (allVisibleSelected) {
+      // Unselect only visible ones
+      const next = new Set(selectedIds)
+      visibleProductIds.forEach(id => next.delete(id))
+      setSelectedIds(next)
     } else {
-      setSelectedIds(new Set(products.map(p => p.id)))
+      // Add only visible ones
+      const next = new Set(selectedIds)
+      visibleProductIds.forEach(id => next.add(id))
+      setSelectedIds(next)
     }
   }
 
@@ -279,250 +353,115 @@ export default function PartnerProductManager() {
     }
   }
 
-  const renderProductRow = (p: any, isChild = false): React.ReactNode => {
-    const hasChildren = !isChild && products.some(child => child.parent_product_id === p.id)
-    const isExpanded = expandedParents.has(p.id)
-    const isOutOfStock = Number(p.stock_quantity) <= 0
-    const isSelected = selectedIds.has(p.id)
-
-    return (
-      <React.Fragment key={p.id}>
-        <tr className={`
-          ${isChild ? 'bg-gray-50/50' : 'bg-white'} 
-          ${isSelected ? 'bg-orange-50/50' : ''}
-          ${isOutOfStock ? 'opacity-80 grayscale-[0.5] border-l-4 border-l-red-500 bg-red-50/30' : 'hover:bg-orange-50/30'} 
-          transition-all border-b border-gray-100
-        `}>
-          <td className="p-4">
-            <input 
-              type="checkbox" 
-              className="rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              checked={isSelected}
-              onChange={() => toggleSelectOne(p.id)}
-              disabled={editedIds.size > 0}
-            />
-          </td>
-          <td className="p-4">
-            <div className="flex items-center gap-3">
-              {hasChildren ? (
-                <button onClick={() => toggleParent(p.id)} className="text-gray-400 hover:text-orange-500">
-                  {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                </button>
-              ) : isChild ? (
-                <div className="w-4 h-px bg-gray-300 ml-2 mr-1" />
-              ) : <div className="w-4" />}
-              
-              <div 
-                className="relative cursor-zoom-in"
-                onClick={() => setZoomedImage(zoomedImage === p.id ? null : p.id)}
-              >
-                <img 
-                  src={p.image_url || '/assets/product_fallback.jpg'} 
-                  className={`transition-all duration-300 rounded-lg bg-white shadow-sm border ${
-                    zoomedImage === p.id ? 'fixed inset-0 m-auto w-[80vh] h-[80vh] z-50 shadow-2xl border-orange-200' : 'w-14 h-14 object-contain'
-                  }`} 
-                />
-                {zoomedImage === p.id && (
-                  <div className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm" onClick={() => setZoomedImage(null)} />
-                )}
-                {!isChild && hasChildren && (
-                  <span className="absolute -top-2 -right-2 bg-orange-600 text-white text-[9px] px-2 py-0.5 rounded-full font-bold shadow-sm border border-white">
-                    GROUP
-                  </span>
-                )}
-              </div>
-
-              <div>
-                <div className="font-bold text-gray-800 flex items-center gap-2">
-                  {p.name}
-                  <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100 uppercase tracking-tight">
-                    {p.brand || 'No Brand'}
-                  </span>
-                  {isOutOfStock && (
-                    <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded-sm font-bold">
-                      OUT OF STOCK
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                    {p.unit_value} {p.unit_metric}
-                  </span>
-                  {p.global_categories?.name && (
-                    <span className="text-[10px] text-orange-600 font-medium">
-                      • {p.global_categories.name}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </td>
-
-          <td className="p-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] text-gray-400 font-bold uppercase">Stock</span>
-              <Input 
-                type="number" 
-                value={p.stock_quantity} 
-                className="h-9 w-24 border-gray-200 focus:ring-orange-500"
-                onChange={(e) => handleUpdateField(p.id, 'stock_quantity', e.target.value)}
-              />
-            </div>
-          </td>
-
-          <td className="p-4">
-            <div className="flex gap-3">
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-gray-400 font-bold uppercase">Cost</span>
-                <div className="relative">
-                  <span className="absolute left-2 top-2 text-gray-400 text-xs">₹</span>
-                  <Input 
-                    type="number" 
-                    value={p.cost_price || 0} 
-                    className="h-9 w-24 pl-5 border-gray-200"
-                    onChange={(e) => handleUpdateField(p.id, 'cost_price', e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-orange-400 font-bold uppercase">MRP / Base</span>
-                <div className="relative">
-                  <span className="absolute left-2 top-2.5 text-orange-400 text-xs font-bold">₹</span>
-                  <Input 
-                    type="number" 
-                    value={p.price} 
-                    className={`h-10 w-28 pl-5 border-orange-200 bg-orange-50/30 text-orange-700 font-bold text-base ${
-                      (Number(p.discount_value) > 0 || p.discounts?.discount_value > 0) ? 'line-through opacity-60' : ''
-                    }`}
-                    onChange={(e) => handleUpdateField(p.id, 'price', e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </td>
-
-          <td className="p-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Flat Discount</span>
-              <div className="flex items-center gap-1">
-                <div className="relative">
-                  <span className="absolute left-2 top-2 text-gray-400 text-xs">₹</span>
-                  <Input 
-                    type="number" 
-                    placeholder="0"
-                    value={p.discount_value !== undefined ? p.discount_value : (p.discounts?.discount_value || '')} 
-                    className="h-9 w-24 pl-5 border-gray-200"
-                    onChange={(e) => handleUpdateField(p.id, 'discount_value', e.target.value)}
-                  />
-                </div>
-              </div>
-              {/* Selling Price Preview*/}
-              {(Number(p.discount_value) > 0 || p.discounts?.discount_value > 0) && (
-                <div className="mt-1 px-2 py-1 bg-emerald-50 border border-emerald-100 rounded-md">
-                  <span className="text-[10px] text-emerald-600 font-bold block leading-none uppercase">Selling at:</span>
-                  <span className="text-sm text-emerald-700 font-black">
-                    ₹{(p.price - (Number(p.discount_value) || p.discounts?.discount_value || 0)).toFixed(0)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </td>
-
-          <td className="p-4 text-right">
-            <div className="flex justify-end items-center gap-2">
-
-                {/* Grouping*/}
-                {isGrouping && groupParentId !== p.id && !isChild && (
-                    <Button 
-                    variant="outline" size="sm" 
-                    className="text-orange-600 border-orange-200 h-10 font-bold"
-                    onClick={() => handleAddToGroup(p.id)}
-                    >
-                    Select
-                    </Button>
-                )}
-
-                {/* Ungrouping*/}
-                {isChild && (
-                    <Button 
-                    variant="ghost" size="icon" 
-                    className="text-gray-400 hover:text-red-600 h-10 w-10 border border-transparent hover:border-red-100" 
-                    title="Remove from group"
-                    onClick={() => handleRemoveFromGroup(p.id)}
-                    >
-                    <X size={20} />
-                    </Button>
-                )}
-
-                {/* Group Initiation */}
-                {!isGrouping && !isChild && (
-                    <Button 
-                    variant="ghost" size="icon" 
-                    className="text-blue-500 hover:bg-blue-50 h-10 w-10 border border-blue-50" 
-                    onClick={() => handleMakeParent(p.id)}
-                    title="Group with others"
-                    >
-                    <Layers size={20} />
-                    </Button>
-                )}
-
-                {/* Delete Button */}
-                <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="text-red-400 hover:text-red-600 hover:bg-red-50 h-10 w-10"
-                    onClick={() => deleteProduct(p.id)}
-                >
-                    <Trash2 size={20} />
-                </Button>
-            </div>
-          </td>
-        </tr>
-        {isExpanded && products
-          .filter(child => child.parent_product_id === p.id)
-          .map(child => renderProductRow(child, true))}
-      </React.Fragment>
-    )
-  }
-
-  const filteredProducts = React.useMemo(() => {
-    if (!searchQuery) return products;
-
-    const fuse = new Fuse(products, {
+  const fuse = React.useMemo(() => {
+    return new Fuse(products, {
       keys: ['name', 'brand', 'global_categories.name'],
-      threshold: 0.3, // Lower is stricter, 0.4 is good for typos
+      threshold: 0.3,
       distance: 100,
       ignoreLocation: true,
       minMatchCharLength: 2
-    });
+    })
+  }, [products])
 
-    const results = fuse.search(searchQuery).map(result => result.item);
+  const filteredProducts = React.useMemo(() => {
+    let result = [...products];
 
-    const resultIds = new Set(results.map(r => r.id));
-    
-    return products.filter(p => {
-      // Direct match
-      if (resultIds.has(p.id)) return true;
-      if (p.parent_product_id && resultIds.has(p.parent_product_id)) return true;
-      if (products.some(child => child.parent_product_id === p.id && resultIds.has(child.id))) return true;
-      return false;
+    if (debouncedQuery) {
+
+      const searchResults = fuse.search(debouncedQuery).map(r => r.item);
+      const resultIds = new Set(searchResults.map(r => r.id));
+      
+      result = products.filter(p => {
+        if (resultIds.has(p.id)) return true;
+        if (p.parent_product_id && resultIds.has(p.parent_product_id)) return true;
+        if (products.some(child => child.parent_product_id === p.id && resultIds.has(child.id))) return true;
+        return false;
+      });
+
+      // Priority Sorting: Exact matches first
+      const query = debouncedQuery.toLowerCase();
+      result.sort((a, b) => {
+        const aName = (a.name || '').toLowerCase();
+        const bName = (b.name || '').toLowerCase();
+
+        const aStarts = aName.startsWith(query);
+        const bStarts = bName.startsWith(query);
+        
+        // 1. If one starts with the query and the other doesn't, the one that starts with it wins.
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+
+        // 2. If both start with it, or neither do, check if one contains it as a whole word
+        const aContains = aName.includes(query);
+        const bContains = bName.includes(query);
+        if (aContains && !bContains) return -1;
+        if (!aContains && bContains) return 1;
+
+        // 3. Fallback to category if search relevance is equal
+        const catA = a.global_categories?.name || 'Uncategorized';
+        const catB = b.global_categories?.name || 'Uncategorized';
+        if (catA !== catB) return catA.localeCompare(catB);
+        return aName.localeCompare(bName);
+      });
+
+      return result;
+    }
+
+    // Default sorting when no search query
+    return result.sort((a, b) => {
+      const catA = a.global_categories?.name || 'Uncategorized';
+      const catB = b.global_categories?.name || 'Uncategorized';
+      if (catA !== catB) return catA.localeCompare(catB);
+      return a.name.localeCompare(b.name);
     });
-  }, [searchQuery, products]);
+  }, [debouncedQuery, products]);
+
   const topLevelProducts = filteredProducts.filter(p => !p.parent_product_id)
 
-  const groupedProducts = topLevelProducts.reduce((acc: Record<string, any[]>, product) => {
-    const categoryName = product.global_categories?.name || 'Uncategorized';
-    if (!acc[categoryName]) {
-      acc[categoryName] = [];
+  const groupedProducts = React.useMemo(() => {
+    // When searching, we create a dummy "Search Results" group to maintain priority sorting
+    if (debouncedQuery) {
+      return { "Search Results": topLevelProducts };
     }
-    acc[categoryName].push(product);
-    return acc;
-  }, {});
 
-  const allCategoryNames = Object.keys(groupedProducts).sort();
-  const displayCategories = activeCategory === 'All' 
-    ? allCategoryNames 
-    : allCategoryNames.filter((cat: string) => cat === activeCategory);
+    return topLevelProducts.reduce((acc: Record<string, any[]>, product) => {
+      const categoryName = product.global_categories?.name || 'Uncategorized';
+      if (!acc[categoryName]) acc[categoryName] = [];
+      acc[categoryName].push(product);
+      return acc;
+    }, {});
+  }, [topLevelProducts, debouncedQuery]);
+
+  const allCategoryNames = React.useMemo(() => {
+    return Object.keys(groupedProducts).sort((a, b) => a.localeCompare(b));
+  }, [groupedProducts]);
+
+  useEffect(() => {
+    if (activeCategory !== 'All' && !allCategoryNames.includes(activeCategory)) {
+      setActiveCategory('All')
+    }
+  }, [allCategoryNames, activeCategory])
+
+  const displayCategories = debouncedQuery
+    ? ["Search Results"] 
+    : (activeCategory === 'All' ? allCategoryNames : allCategoryNames.filter(cat => cat === activeCategory));
+
+  const rows = React.useMemo(() => {
+    return buildRows({
+      groupedProducts,
+      allProducts: products,
+      expandedParents,
+      displayCategories,
+    });
+  }, [groupedProducts, products, expandedParents, displayCategories]);
+
+  const visibleProductIds = React.useMemo(() => {
+    return rows
+      .filter(r => r.type === 'product')
+      .map(r => r.product.id)
+  }, [rows])
+
+  const isSearchEmpty = debouncedQuery && filteredProducts.length === 0
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -588,16 +527,16 @@ export default function PartnerProductManager() {
       </div>
 
       <div className="flex gap-6 items-start">
-        {/*Category Sidebar */}
-        <aside className="w-24 hover:w-64 transition-all duration-300 ease-in-out flex-shrink-0 flex flex-col sticky top-6 z-30 group/sidebar">
-          <div className="bg-white/80 backdrop-blur-md rounded-3xl py-4 flex flex-col gap-1 border border-gray-100 shadow-xl">
+        {/* Fixed Category Sidebar */}
+        <aside className="w-52 flex-shrink-0 flex flex-col sticky top-6 h-[calc(100vh-120px)] z-30">
+          <div className="bg-white/80 backdrop-blur-md rounded-3xl py-4 flex flex-col gap-1 border border-gray-100 shadow-xl max-h-full overflow-y-auto custom-scrollbar">
             {categories
               .filter(cat => cat.name === 'All' || allCategoryNames.includes(cat.name))
               .map((cat) => (
               <button
                 key={cat.name}
                 onClick={() => setActiveCategory(cat.name)}
-                className={`flex flex-col group-hover/sidebar:flex-row items-center py-1.5 px-3 mx-2 rounded-2xl transition-all duration-300 gap-0 group-hover/sidebar:gap-4 ${
+                className={`flex items-center py-3 px-3 mx-2 rounded-2xl transition-all duration-200 gap-3 ${
                   activeCategory === cat.name 
                     ? 'bg-white shadow-md ring-1 ring-black/[0.03]' 
                     : 'hover:bg-white/80'
@@ -613,25 +552,20 @@ export default function PartnerProductManager() {
                       <Package size={20} />
                     </div>
                   ) : (
-                    <div className={`w-full h-full rounded-xl p-0.5 transition-all ${
+                    <div className={`w-full h-full rounded-xl p-1 transition-all ${
                       activeCategory === cat.name ? 'bg-orange-100' : 'bg-gray-100'
                     }`}>
                       <img
                         src={cat.image_url || '/assets/product_fallback.jpg'}
                         alt={cat.name}
-                        className="w-full h-full object-cover rounded-[10px]"
+                        className="w-full h-full object-cover rounded-md"
                       />
                     </div>
                   )}
                 </div>
                 <span className={`
-                  text-[10px] pt-[2] group-hover/sidebar:text-sm 
-                  text-center group-hover/sidebar:text-left 
-                  font-medium group-hover/sidebar:font-semibold 
-                  leading-tight uppercase 
-                  tracking-tight group-hover/sidebar:tracking-normal
-                  transition-all duration-300
-                  ${activeCategory === cat.name ? 'text-orange-600' : 'text-gray-400 group-hover/sidebar:text-gray-600'}
+                  text-[13px] text-left font-semibold leading-tight transition-all duration-200
+                  ${activeCategory === cat.name ? 'text-orange-600' : 'text-gray-500'}
                 `}>
                   {cat.name}
                 </span>
@@ -640,61 +574,122 @@ export default function PartnerProductManager() {
           </div>
         </aside>
 
-        <div className="flex-1 min-w-0 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-gray-50/80 border-b border-gray-100">
-            <tr>
-              <th className="p-4 w-10">
-                <input 
-                  type="checkbox" 
-                  className="rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer disabled:opacity-30"
-                  checked={products.length > 0 && selectedIds.size === products.length}
-                  onChange={toggleSelectAll}
-                  disabled={editedIds.size > 0}
-                />
-              </th>
-              <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider">Product Information</th>
-              <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden md:table-cell">Inventory</th>
-              <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden sm:table-cell">Pricing</th>
-              <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden lg:table-cell">Discount</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-            <tbody className="divide-y divide-gray-50">
-            {loading ? (
-              <TableSkeleton rows={10} columns={6} />
-            ) : (
-              displayCategories.map((category: string) => (
-              <React.Fragment key={category}>
-              {/* Category Section Header */}
-              <tr className="bg-gray-100/50">
-                <td colSpan={6} className="p-3">
-                <div className="flex items-center gap-2">
-                  <Tag size={14} className="text-orange-600" />
-                    <span className="text-sm font-black text-gray-700 uppercase tracking-widest">
-                    {category} 
-                    <span className="ml-2 text-[10px] text-gray-400 font-medium">
-                      ({groupedProducts[category].length} Items)
-                    </span>
-                    </span>
-                </div>
-                </td>
+        <div className="flex-1 min-w-0 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-auto">
+          <table className="w-full text-left border-collapse table-fixed">
+            <colgroup>
+              <col style={{ width: '50px' }}/>{/* checkbox */}
+              <col style={{ width: '40%' }}/>{/* product info */}
+              <col style={{ width: '140px' }}/>{/* inventory */}
+              <col style={{ width: '220px' }}/>{/* pricing */}
+              <col style={{ width: '180px' }}/>{/* discount */}
+              <col style={{ width: '120px' }}/>{/* actions */}
+            </colgroup>
+            <thead className="bg-gray-50/95 border-b border-gray-100 sticky top-0 z-20 backdrop-blur">
+              <tr>
+                <th className="p-4 w-10">
+                  <input 
+                    type="checkbox" 
+                    ref={(el) => {
+                      if (!el) return
+                      const total = visibleProductIds.length
+                      const selectedCount = visibleProductIds.filter(id => selectedIds.has(id)).length
+                      el.indeterminate = total > 0 && selectedCount > 0 && selectedCount < total
+                    }}
+                    className="rounded border-gray-300 text-orange-600 focus:ring-orange-500 cursor-pointer disabled:opacity-30"
+                    checked={ visibleProductIds.length > 0 && visibleProductIds.every(id => selectedIds.has(id))}
+                    onChange={toggleSelectAll}
+                    disabled={editedIds.size > 0}
+                  />
+                </th>
+                <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider">Product Information</th>
+                <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden md:table-cell">Inventory</th>
+                <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden sm:table-cell">Pricing</th>
+                <th className="p-4 font-bold text-gray-600 text-xs uppercase tracking-wider hidden lg:table-cell">Discount</th>
+                <th className="p-4 font-bold text-gray-600 text-xs uppercase">Actions</th>
               </tr>
-                
-              {groupedProducts[category].map((p: any) => renderProductRow(p))}
-              </React.Fragment>
-              ))
-            )}
-            </tbody>
-        </table>
-        {products.length === 0 && !loading && (
-           <div className="p-20 text-center">
-             <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-               <Package className="w-10 h-10 text-gray-300" />
-             </div>
-             <p className="text-gray-500 font-medium">Your inventory is empty.</p>
-           </div>
-        )}
+            </thead>
+              <tbody>
+                <tr>
+                  <td colSpan={6} className="p-0">
+                    <div style={{ height: '80vh' }}>
+                      {isSearchEmpty ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center">
+                          <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mb-4">
+                            <PackageX className="w-10 h-10 text-gray-300" />
+                          </div>
+                          <p className="text-gray-600 font-semibold">
+                            No products found
+                          </p>
+                          <p className="text-gray-400 text-sm mt-1">
+                            Try a different search term
+                          </p>
+                        </div>
+                      ) : (
+                        <Virtuoso
+                          data={rows}
+                          itemContent={(index, row) => {
+                            if (row.type === 'category') {
+                              return (
+                                <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 sticky top-0 z-10">
+                                  <div className="flex items-center gap-2">
+                                    <Tag size={14} className="text-orange-600" />
+                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-[0.2em]">
+                                      {row.category}
+                                    </span>
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            return (
+                              <table className="w-full border-collapse table-fixed">
+                                <colgroup>
+                                  <col style={{ width: '50px' }}/>
+                                  <col style={{ width: '40%' }}/>
+                                  <col style={{ width: '140px' }}/>
+                                  <col style={{ width: '220px' }}/>
+                                  <col style={{ width: '180px' }}/>
+                                  <col style={{ width: '120px' }}/>
+                                </colgroup>
+                                <tbody>
+                                  <ProductRow
+                                    product={row.product}
+                                    allProducts={products}
+                                    isChild={row.isChild}
+                                    expandedParents={expandedParents}
+                                    selectedIds={selectedIds}
+                                    editedIds={editedIds}
+                                    zoomedImage={zoomedImage}
+                                    isGrouping={isGrouping}
+                                    groupParentId={groupParentId}
+                                    onToggleParent={toggleParent}
+                                    onToggleSelect={toggleSelectOne}
+                                    onSetZoom={setZoomedImage}
+                                    onUpdateField={handleUpdateField}
+                                    onAddToGroup={handleAddToGroup}
+                                    onRemoveFromGroup={handleRemoveFromGroup}
+                                    onMakeParent={handleMakeParent}
+                                    onDelete={deleteProduct}
+                                  />
+                                </tbody>
+                              </table>
+                            )
+                          }}
+                        />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+          </table>
+          {products.length === 0 && !loading && (
+            <div className="p-20 text-center">
+              <div className="bg-gray-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Package className="w-10 h-10 text-gray-300" />
+              </div>
+              <p className="text-gray-500 font-medium">Your inventory is empty.</p>
+            </div>
+          )}
         </div>
       </div>
 

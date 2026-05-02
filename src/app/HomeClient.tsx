@@ -42,11 +42,28 @@ const showcaseItems = [
 
 export default function HomeClient() {
   const [activeTab, setActiveTab] = useState(showcaseItems[0])
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const loginUrl = "/partners/auth"
+
+  React.useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') setDeferredPrompt(null);
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-900 selection:bg-[#FE8000]/30">
-      <PublicHeader />
+      <PublicHeader onInstall={deferredPrompt ? handleInstallClick : null} />
 
       {/* 1. Modern Hero Section */}
       <section className="relative pt-24 pb-20 lg:pt-32 lg:pb-32 min-h-[100vh] flex flex-col justify-center overflow-hidden bg-[#fffaf5]">
@@ -289,7 +306,7 @@ export default function HomeClient() {
         </div>
       </section>
 
-      <Footer />
+      <Footer onInstall={deferredPrompt ? handleInstallClick : null} />
     </div>
   )
 }

@@ -3,10 +3,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { 
-  ChevronLeft, Printer, Download, Share2, 
-  Phone, Calendar, Hash, Loader2, CheckCircle2 
-} from 'lucide-react'
+import { ChevronLeft, Printer, Share2, Phone, Calendar, Loader2, CheckCircle2 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'

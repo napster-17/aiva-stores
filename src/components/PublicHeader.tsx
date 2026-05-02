@@ -5,14 +5,14 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, Mail, Phone, HeartHandshake, LogIn } from 'lucide-react'
+import { Menu, X, Mail, Phone, HeartHandshake, LogIn, MonitorDown } from 'lucide-react'
 
 const navLinks = [
   { name: 'Home', href: '/' },
   { name: 'About Us', href: 'https://www.thegoaiva.com/about-us' },
 ]
 
-export default function PublicHeader() {
+export default function PublicHeader({ onInstall }: { onInstall: (() => void) | null }) {
   const [isOpen, setIsOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
   const pathname = usePathname()
@@ -70,6 +70,20 @@ export default function PublicHeader() {
               <LogIn size={16} className="text-[#FE8000]" />
               Login
             </Link>
+
+            {onInstall && (
+              <button 
+                onClick={onInstall}
+                className={`text-sm font-semibold flex items-center gap-2 transition-all px-3 py-1.5 rounded-lg border ${
+                  scrolled 
+                    ? 'text-[#FE8000] border-[#FE8000]/20 bg-orange-50/50' 
+                    : 'text-white border-white/20 bg-white/10 hover:bg-white/20'
+                }`}
+              >
+                <MonitorDown size={16} />
+                Desktop App
+              </button>
+            )}
             
             <button 
               onClick={() => setIsModalOpen(true)}
