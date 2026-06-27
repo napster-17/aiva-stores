@@ -6,11 +6,11 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { motion, AnimatePresence } from 'framer-motion'
-import { LayoutDashboard, Package, ShoppingBag, ReceiptIndianRupee, ArrowDownUp, 
-  Settings, LogOut, ScanBarcode, Zap, BookOpen, Wallet, BarChart3, Headset, Bike
-} from 'lucide-react'
+import { LayoutDashboard, Package, ShoppingBag, ArrowDownUp, Settings, LogOut, ScanBarcode, 
+  Zap, Wallet, BarChart3, Headset, Bike } from 'lucide-react'
 import { PartnerProfileProvider, usePartnerProfile } from '@/components/partners/PartnerProfileProvider'
 import ConnectivityBanner from '@/components/partners/ConnectivityBanner'
+import PartnerNotificationsProvider, { usePartnerNotifications } from '@/components/partners/PartnerNotificationsProvider'
 
 const ModernLoader = () => (
   <div className="flex flex-col items-center gap-4">
@@ -51,6 +51,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function Sidebar({ isHovered, setIsHovered, handleLogout, menuItems, pathname, setIsPageLoading }: any) {
   const { profile } = usePartnerProfile()
+  const { notificationCount } = usePartnerNotifications()
   const [showActiveAnimation, setShowActiveAnimation] = useState(false)
 
   // Trigger Siri-style glow when store goes online
@@ -217,8 +218,12 @@ function Sidebar({ isHovered, setIsHovered, handleLogout, menuItems, pathname, s
                   className="absolute left-0 w-1 h-6 bg-[#FF8500] rounded-r-full shadow-[0_0_10px_rgba(255,133,0,0.5)]" 
                 />
               )}
-              <div className="min-w-[54px] flex items-center justify-center">
+              <div className="min-w-[54px] flex items-center justify-center relative">
                 <item.icon size={22} strokeWidth={isActive ? 2.5 : 2} />
+
+                {item.href === '/partners/dashboard' && notificationCount > 0 && (
+                  <span className="absolute top-0 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+                )}
               </div>
               <AnimatePresence mode="wait">
                 {isHovered && (
@@ -339,6 +344,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <PartnerProfileProvider>
       <AuthGuard>
+      <PartnerNotificationsProvider>
         <ConnectivityBanner />
         <div className="flex h-screen w-full bg-[#F8F9FA] overflow-hidden relative">
           <AnimatePresence>
@@ -380,6 +386,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </main>
         </div>
+      </PartnerNotificationsProvider>  
       </AuthGuard>
     </PartnerProfileProvider>
   )

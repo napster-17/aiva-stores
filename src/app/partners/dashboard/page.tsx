@@ -11,15 +11,13 @@ import { createClient } from '@/lib/supabase/supabaseClient'
 import { usePartnerProfile } from '@/components/partners/PartnerProfileProvider'
 import RequirementsModal from '@/components/partners/settings/RequirementsModal'
 import GoOnlineConfirmationModal from '@/components/partners/settings/GoOnlineConfirmationModal'
-import { fetchNotifications, AppNotification, playNotificationSound } from '@/lib/partners/notification-utils'
-import NotificationSheet from '@/components/partners/NotificationSheet'
+import { usePartnerNotifications } from '@/components/partners/PartnerNotificationsProvider'
 
 export default function PartnerDashboard() {
   const { profile, refreshProfile } = usePartnerProfile()
   const router = useRouter()
   const supabase = createClient()
-  const [notifications, setNotifications] = useState<AppNotification[]>([])
-  const [showNotifications, setShowNotifications] = useState(false)
+  const { notifications, openNotifications } = usePartnerNotifications()
   const [salesData, setSalesData] = useState({ online: 0, offline: 0 })
   const [lowStockItems, setLowStockItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -88,37 +86,8 @@ export default function PartnerDashboard() {
     }
   }
 
-  const loadNotifications = async () => {
-    if (profile?.id) {
-      const data = await fetchNotifications(profile.id)
-      setNotifications(data)
-    }
-  }
-
   useEffect(() => {
-    loadNotifications()
     loadStats()
-
-    if (profile?.id) {
-      const channel = supabase
-        .channel('schema-db-changes')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'app_notifications', filter: `user_id=eq.${profile.id}` },
-          (payload) => {
-            playNotificationSound();
-            loadNotifications();
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'app_notifications' },
-          () => loadNotifications()
-        )
-        .subscribe()
-
-      return () => { supabase.removeChannel(channel) }
-    }
   }, [profile?.id])
 
   const handleToggleOnline = async () => {
@@ -233,7 +202,7 @@ export default function PartnerDashboard() {
           </div>
 
           <button 
-            onClick={() => setShowNotifications(true)}
+            onClick={openNotifications}
             className={`relative p-5 rounded-2xl border transition-all duration-300 ${
               notifications.length > 0 
               ? 'bg-[#FF8500] border-[#FF8500] text-white shadow-lg shadow-orange-200' 
@@ -387,18 +356,6 @@ export default function PartnerDashboard() {
           <p className="text-gray-400 leading-relaxed font-medium">Configure store timings, profile info, and delivery zones.</p>
         </div>
       </div>
-
-      {/* Notification Pane */}
-      {showNotifications && profile && (
-        <div className="relative">
-           <NotificationSheet 
-            notifications={notifications}
-            userId={profile.id}
-            onClose={() => setShowNotifications(false)}
-            refresh={loadNotifications}
-          />
-        </div>
-      )}
       <RequirementsModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 

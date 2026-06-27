@@ -43,7 +43,7 @@ export default function NotificationSheet({ notifications, userId, onClose, refr
             <div>
               <h3 className="text-[18px] font-black font-bold text-gray-900 leading-none tracking-regular">Notifications</h3>
               <p className="text-[12px] text-orange-500 font-semibold tracking-wider mt-1">
-                {notifications.length} New Alerts
+                {notifications.length} Total Alerts
               </p>
             </div>
           </div>

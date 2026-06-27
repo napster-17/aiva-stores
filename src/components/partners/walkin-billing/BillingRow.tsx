@@ -13,7 +13,7 @@ interface BillingRowProps {
 const BillingRow: React.FC<BillingRowProps> = ({ row, onAddToCart, cart, columns }) => {
   return (
     <div
-      className="grid gap-6"
+      className="grid gap-6 mb-6"
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`
       }}

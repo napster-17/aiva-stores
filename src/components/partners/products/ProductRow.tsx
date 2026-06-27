@@ -1,5 +1,5 @@
 //src/components/partners/products/ProductRow.tsx
-//Updated with ProductRow O(n²) for grouping/ungrouping logic optimized with useMemo to avoid unnecessary recalculations.
+//Updated with ProductRow O(n²)  for grouping/ungrouping logic optimized with useMemo to avoid unnecessary recalculations.
 'use client'
 import React from 'react'
 import { ChevronDown, ChevronRight, Trash2, Layers, X } from 'lucide-react'
@@ -210,7 +210,10 @@ export const ProductRow = React.memo(({
               <Button 
                 variant="outline" size="sm" 
                 className="text-orange-600 border-orange-200 h-10 font-bold"
-                onClick={() => onAddToGroup(p.id)}
+                onClick={() => {
+                  if (p.id === groupParentId) return;
+                  onAddToGroup(p.id);
+                }}
               >
                 Select
               </Button>

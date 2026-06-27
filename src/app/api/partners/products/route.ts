@@ -129,18 +129,19 @@ export async function POST(req: Request) {
     }
 
     if (action === 'update') {
-      const { 
-        price, cost_price, stock_quantity, parent_product_id, 
-        discount_value, discount_type 
+      const {
+        price,
+        cost_price,
+        stock_quantity,
+        parent_product_id,
+        discount_value
       } = data;
 
       let discount_id = data.discount_id;
 
-      // Logic: If value > 0, we create/update a discount. If 0, we unlink.
+      // ---- discount logic (same as before) ----
       if (Number(discount_value) > 0) {
-        // Product discounts are now strictly 'flat' as per your requirement
-        const type = 'flat'; 
-        const code = `auto-${id}-${type}`;
+        const code = `auto-${id}-flat`;
         const discountName = `Flat ₹${discount_value} Off`;
 
         const { data: existing } = await supabase
@@ -151,213 +152,82 @@ export async function POST(req: Request) {
 
         if (existing) {
           await supabase.from('discounts').update({
-            discount_type: type,
             discount_value: Number(discount_value),
             name: discountName,
           }).eq('id', existing.id);
+
           discount_id = existing.id;
         } else {
-          const { data: newDiscount, error: insErr } = await supabase
+          const { data: newDiscount } = await supabase
             .from('discounts')
             .insert({
               store_id: storeId,
               code,
               name: discountName,
-              discount_type: type,
+              discount_type: 'flat',
               discount_value: Number(discount_value),
               applies_to: 'product',
             })
             .select('id')
             .single();
-          if (!insErr) discount_id = newDiscount.id;
+
+          discount_id = newDiscount?.id;
         }
       } else {
         discount_id = null;
       }
 
+      // ---- IMPORTANT: direct update (NOT RPC) ----
       const { error } = await supabase
         .from('products')
         .update({
           price: Number(price),
           cost_price: Number(cost_price),
           stock_quantity: Number(stock_quantity),
-          parent_product_id: parent_product_id,
-          discount_id: discount_id
+          parent_product_id: parent_product_id ?? null,
+          discount_id
         })
         .eq('id', id)
         .eq('store_id', storeId);
 
       if (error) throw error;
+
       return NextResponse.json({ success: true });
     }
 
     if (action === 'bulk_update') {
-      const CHUNK_SIZE = 100
-      const chunks = chunkArray(data, CHUNK_SIZE)
+      const payload = data.map((item: any) => ({
+        ...item,
+        store_id: storeId
+      }));
 
-      for (const chunk of chunks) {
-        const promises = chunk.map(async (item: any) => {
-          const {
-            id,
-            price,
-            cost_price,
-            stock_quantity,
-            discount_value
-          } = item
+      const { error } = await supabase.rpc('bulk_update_products', {
+        input: payload
+      });
 
-          let discount_id = item.discount_id
+      if (error) throw error;
 
-          if (Number(discount_value) > 0) {
-            const code = `auto-${id}-flat`
-            const discountName = `Flat ₹${discount_value} Off`
-
-            const { data: existing } = await supabase
-              .from('discounts')
-              .select('id')
-              .eq('code', code)
-              .single()
-
-            if (existing) {
-              await supabase.from('discounts').update({
-                discount_value: Number(discount_value),
-                name: discountName,
-              }).eq('id', existing.id)
-
-              discount_id = existing.id
-            } else {
-              const { data: newDiscount } = await supabase
-                .from('discounts')
-                .insert({
-                  store_id: storeId,
-                  code,
-                  name: discountName,
-                  discount_type: 'flat',
-                  discount_value: Number(discount_value),
-                  applies_to: 'product',
-                })
-                .select('id')
-                .single()
-
-              discount_id = newDiscount?.id
-            }
-          } else {
-            // DO NOT delete manually → let SQL trigger handle it
-            discount_id = null
-          }
-
-          return supabase
-            .from('products')
-            .update({
-              price: Number(price),
-              cost_price: Number(cost_price),
-              stock_quantity: Number(stock_quantity),
-              discount_id
-            })
-            .eq('id', id)
-            .eq('store_id', storeId)
-        })
-
-        const limit = pLimit(5);
-        await Promise.all(
-          promises.map(p => limit(() => p))
-        )
-      }
-
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true });
     }
 
     // Action: Delete
     if (action === 'delete') {
-      // get discount_id first
-      const { data: product } = await supabase
-        .from('products')
-        .select('discount_id')
-        .eq('id', id)
-        .single();
-
-        // get children
-        const { data: children } = await supabase
-          .from('products')
-          .select('id')
-          .eq('parent_product_id', id);
-
-        if (children && children.length > 0) {
-          const newParentId = children[0].id;
-
-        // promote first child → root
-        await supabase
-          .from('products')
-          .update({ parent_product_id: null })
-          .eq('id', newParentId);
-
-        // reassign remaining children to new parent
-        const remainingIds = children
-          .slice(1)
-          .map(c => c.id);
-
-        if (remainingIds.length > 0) {
-          await supabase
-            .from('products')
-            .update({ parent_product_id: newParentId })
-            .in('id', remainingIds);
-        }
-      }
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', id)
-        .eq('store_id', storeId);
+      const { error } = await supabase.rpc('bulk_delete_products', {
+        ids: [id]
+      });
 
       if (error) throw error;
 
-      // delete discount if exists
-      if (product?.discount_id) {
-        await supabase
-          .from('discounts')
-          .delete()
-          .eq('id', product.discount_id)
-          .eq('store_id', storeId);
-      }
       return NextResponse.json({ success: true });
     }
 
     if (action === 'bulk_delete') {
-      const ids = data;
-
-      // 1. Get all discount_ids BEFORE deleting products
-      const { data: productsWithDiscounts } = await supabase
-        .from('products')
-        .select('discount_id')
-        .in('id', ids)
-        .eq('store_id', storeId);
-
-      const discountIds = (productsWithDiscounts || [])
-        .map(p => p.discount_id)
-        .filter(Boolean);
-
-      // 2. Handle parent-child orphaning
-      await supabase
-        .from('products')
-        .update({ parent_product_id: null })
-        .in('parent_product_id', ids);
-
-      // 3. Delete products  
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .in('id', ids)
-        .eq('store_id', storeId);
+      const { error } = await supabase.rpc('bulk_delete_products', {
+        ids: data
+      });
 
       if (error) throw error;
 
-      // 4. Delete related discounts (IMPORTANT)
-      if (discountIds.length > 0) {
-        await supabase
-          .from('discounts')
-          .delete()
-          .in('id', discountIds)
-          .eq('store_id', storeId);
-      }
       return NextResponse.json({ success: true });
     }
 

@@ -293,9 +293,17 @@ export default function PartnerProductManager() {
     toast.info("Select another product to add it to this group")
   }
 
-    const handleAddToGroup = async (childId: string) => {
+  const handleAddToGroup = async (childId: string) => {
+    if (!groupParentId || childId === groupParentId) return;
+
     const currentProduct = products.find(p => p.id === childId);
     if (!currentProduct) return;
+
+    // prevent multi-level nesting
+    if (currentProduct.parent_product_id) {
+      toast.error('Already part of another group');
+      return;
+    }
 
     try {
       const res = await fetch('/api/partners/products', {
@@ -312,17 +320,18 @@ export default function PartnerProductManager() {
             stock_quantity: Number(currentProduct.stock_quantity)
           } 
         })
-      })
+      });
+
       if (res.ok) {
-        toast.success('Added to group')
-        setIsGrouping(false)
-        setGroupParentId(null)
-        fetchInventory()
+        toast.success('Added to group');
+        setIsGrouping(false);
+        setGroupParentId(null);
+        fetchInventory();
       }
-    } catch (err) {
-      toast.error('Grouping failed')
+    } catch {
+      toast.error('Grouping failed');
     }
-  }
+  };
 
   const handleRemoveFromGroup = async (id: string) => {
     const currentProduct = products.find(p => p.id === id);
