@@ -206,7 +206,7 @@ export default function WalkinHistoryPage() {
                 <div className="grid gap-4">
                   {groupedOrders[date].map((order: any) => {
                     const inv = order.walkin_invoices?.[0];
-                    const pdfUrl = `https://juyiojsvoylvslqxsqxp.supabase.co/storage/v1/object/public/walkin-invoices/${order.store_id}/${order.id}.pdf`;
+                    const pdfUrl = `https://nbgfxirilissmfadmbdd.supabase.co/storage/v1/object/public/walkin-invoices/${order.store_id}/${order.id}.pdf`;
                     
                     return (
                       <div key={order.id} className="relative group">

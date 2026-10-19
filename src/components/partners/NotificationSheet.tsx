@@ -32,7 +32,7 @@ export default function NotificationSheet({ notifications, userId, onClose, refr
       <div className="fixed inset-0 bg-black/[0.02] backdrop-blur-[2px] z-40" onClick={onClose} />
       
       {/* Sleek Dropdown Pane */}
-      <div className="fixed top-24 right-4 md:right-10 w-[380px] max-h-[85vh] bg-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.15)] z-50 rounded-[2.5rem] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+      <div className="fixed top-24 right-4 md:right-10 w-[380px] max-h-[85vh] bg-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.15)] z-50 rounded-[1.5rem] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
         
         {/* Header - Matching Walk-in Billing Style */}
         <div className="px-6 py-4 border-b border-gray-50 flex justify-between items-center bg-white sticky top-0 z-10">

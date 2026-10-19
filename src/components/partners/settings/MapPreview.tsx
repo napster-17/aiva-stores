@@ -1,4 +1,4 @@
-//src/components/partners/MapPreview.tsx
+//src/components/partners/settings/MapPreview.tsx
 'use client';
 
 import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet';
@@ -29,7 +29,7 @@ interface MapPreviewProps {
   lng: number;
   height?: number;
   radius?: number;
-  mapType?: 'standard' | 'satellite';
+  mapType?: 'clean' | 'standard' | 'satellite';
   onLocationChange?: (lat: number, lng: number) => void;
 }
 
@@ -96,15 +96,19 @@ export default function MapPreview({
         <ZoomControl position="bottomright" />
         <ChangeView center={position} />
         
-        {mapType === 'standard' ? (
+        {mapType === 'satellite' ? (
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-            attribution='&copy; OpenStreetMap contributors'
+            key="satellite"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
           />
         ) : (
           <TileLayer
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+            key={mapType}
+            url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            maxZoom={19}
+            className={mapType === 'clean' ? 'aiva-clean-tiles' : ''}
           />
         )}
         
@@ -133,6 +137,12 @@ export default function MapPreview({
           />
         )}
       </MapContainer>
+
+      <style jsx global>{`
+        .aiva-clean-tiles {
+          filter: saturate(0.5) brightness(1.06) contrast(0.94);
+        }
+      `}</style>
     </div>
   );
 }

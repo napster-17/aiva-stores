@@ -2,7 +2,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Store, Clock, Phone, MapPin, CircleCheckBig, Loader2, Copy,
+import { Store, Clock, Phone, MapPin, CircleCheckBig, Loader2, Copy, ChevronDown, Check, 
   Image as ImageIcon, Navigation, Globe, Edit2, LocateFixed, Layers, Crosshair, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
@@ -29,7 +29,8 @@ export default function StoreSettings() {
   const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
-  const [mapType, setMapType] = useState<'standard' | 'satellite'>('standard')
+  const [mapType, setMapType] = useState<'clean' | 'standard' | 'satellite'>('clean')
+  const [isMapStyleOpen, setIsMapStyleOpen] = useState(false)
   const [isFetchingLocation, setIsFetchingLocation] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
@@ -450,7 +451,7 @@ export default function StoreSettings() {
             <div className="lg:col-span-3 h-[500px] relative group">
                 <form 
                   onSubmit={handleSearchLocation}
-                  className="absolute top-6 left-1/2 -translate-x-1/2 z-[10] flex gap-2 w-full max-w-[280px] md:max-w-xs"
+                  className="absolute top-[76px] sm:top-5 left-1/2 -translate-x-1/2 z-[900] flex gap-2 w-[calc(100%-32px)] max-w-[280px] sm:max-w-[220px] xl:max-w-xs"
                 >
                 <div className="relative flex-1">
                     <Input 
@@ -464,26 +465,79 @@ export default function StoreSettings() {
                     </button>
                 </div>
                 </form>
-              <div className="absolute top-4 right-4 z-[10] flex flex-col gap-2">
-                <button 
-                  onClick={() => setMapType(prev => prev === 'standard' ? 'satellite' : 'standard')}
-                  className="bg-white p-3 rounded-xl shadow-lg border border-gray-100 hover:bg-gray-50 transition-all group/btn"
-                  title="Toggle Satellite View"
-                >
-                  <Layers size={20} className={mapType === 'satellite' ? 'text-orange-600' : 'text-gray-600'} />
-                </button>
-                <button 
+              {/* Current Location — Top Left */}
+              <div className="absolute top-4 left-4 z-[1000]">
+                <button
+                  type="button"
                   onClick={fetchCurrentLocation}
                   disabled={isFetchingLocation}
-                  className="bg-white p-3 rounded-xl shadow-lg border border-gray-100 hover:bg-gray-50 transition-all disabled:opacity-50"
-                  title="Fetch Current Location"
+                  className="w-11 h-11 flex items-center justify-center bg-white/95 backdrop-blur-xl rounded-xl shadow-lg border border-gray-100 text-gray-600 hover:text-orange-600 hover:bg-orange-50 transition-all disabled:opacity-50"
+                  title="Use Current Location"
+                  aria-label="Use Current Location"
                 >
                   {isFetchingLocation ? (
                     <Loader2 size={20} className="animate-spin text-orange-600" />
                   ) : (
-                    <LocateFixed size={20} className="text-gray-600" />
+                    <LocateFixed size={20} />
                   )}
                 </button>
+              </div>
+
+              {/* Map Style — Top Right, Vertical Dropdown */}
+              <div className="absolute top-4 right-4 z-[1000]">
+                <div className="relative flex flex-col items-end gap-2">
+
+                  <button
+                    type="button"
+                    onClick={() => setIsMapStyleOpen(prev => !prev)}
+                    aria-label="Select Map Style"
+                    aria-expanded={isMapStyleOpen}
+                    title="Choose Map Style"
+                    className={`h-11 flex items-center gap-2 px-3 rounded-xl shadow-lg border transition-all ${
+                      isMapStyleOpen
+                        ? 'bg-orange-600 border-orange-600 text-white'
+                        : 'bg-white/95 border-gray-100 text-gray-600 hover:text-orange-600'
+                    }`}
+                  >
+                    <Layers size={18} />
+                    <ChevronDown
+                      size={14}
+                      className={`transition-transform duration-200 ${
+                        isMapStyleOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {isMapStyleOpen && (
+                    <div className="w-36 bg-white/95 backdrop-blur-xl rounded-2xl border border-gray-100 shadow-xl p-1.5 space-y-1">
+
+                      {([
+                        { id: 'clean', label: 'Clean' },
+                        { id: 'standard', label: 'Streets' },
+                        { id: 'satellite', label: 'Satellite' },
+                      ] as const).map(option => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            setMapType(option.id)
+                            setIsMapStyleOpen(false)
+                          }}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                            mapType === option.id
+                              ? 'bg-orange-600 text-white'
+                              : 'text-gray-600 hover:bg-orange-50 hover:text-orange-600'
+                          }`}
+                        >
+                          <span>{option.label}</span>
+                          {mapType === option.id && <Check size={14} />}
+                        </button>
+                      ))}
+
+                    </div>
+                  )}
+
+                </div>
               </div>
 
               {formData.latitude && formData.longitude && !isNaN(parseFloat(formData.latitude)) && !isNaN(parseFloat(formData.longitude)) ? (
