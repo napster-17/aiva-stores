@@ -1,25 +1,26 @@
 //src/app/partners/dashboard/walkin-billing/page.tsx: Updated with fixed sidebar, only 3 cards when the right side tray opens, and safety check for the images from unknown sources.
 //Updated with Virualization using react-virtuoso and dynamic column count based on screen size and cart state.
 'use client'
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import Fuse from 'fuse.js'
-import { Search, ShoppingCart, Trash2, ChevronLeft, History, Loader2, Package, Banknote, CreditCard, Info } from 'lucide-react'
+import { Search, ShoppingCart, Trash2, ChevronLeft, History, Loader2, Package, Banknote, CreditCard, Minus, Plus } from 'lucide-react'
+import { Virtuoso } from 'react-virtuoso'
 import { createClient } from '@/lib/supabase/client'
 import { CartProduct, createWalkinOrder, getRecentCustomerPhones } from '@/lib/partners/walkin-billing/utils'
 import { getWhatsAppUrl } from '@/lib/partners/walkin-billing/whatsapp'
 import { generateAndUploadInvoice } from '@/lib/partners/walkin-billing/pdf-service'
+import { buildBillingRows } from '@/utils/buildBillingRows'
 import { usePartnerProfile } from '@/components/partners/PartnerProfileProvider'
 import ProductCard from '@/components/partners/walkin-billing/ProductCard'
 import InvoiceDialog from '@/components/partners/walkin-billing/InvoiceDialog'
-import { Virtuoso } from 'react-virtuoso'
 import BillingRow from '@/components/partners/walkin-billing/BillingRow'
-import { buildBillingRows } from '@/utils/buildBillingRows'
+import WalkinPhoneScannerPairing, { type WalkinPhoneScannerHandle, type WalkinWebScanResult, } from '@/components/partners/walkin-billing/WalkinPhoneScannerPairing'
 
 interface Product {
   id: string; name: string; price: number; stock_quantity: number; frozen_quantity: number; image_url?: string | null; 
-  category_name?: string; unit_value: number; unit_metric: string; brand?: string | null; 
+  category_name?: string; unit_value: number; unit_metric: string; brand?: string | null; barcode?: string | null; 
   discounts?: { discount_type: 'flat' | 'percent'; discount_value: number; };
 }
 
@@ -45,6 +46,17 @@ export default function WalkinBillingPage() {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Cards' | 'Credit'>('Cash')
   const [columns, setColumns] = useState(6)
+  const scannerRef = useRef<WalkinPhoneScannerHandle>(null)
+  const billingLayoutRef = useRef<HTMLDivElement>(null)
+  const cartRef = useRef<Record<string, CartProduct>>({})
+  const billingLockedRef = useRef(false)
+  const checkoutRunningRef = useRef(false)
+  const [scannerResumeFailed, setScannerResumeFailed] = useState(false)
+
+  const commitCart = (next: Record<string, CartProduct>) => {
+    cartRef.current = next
+    setCart(next)
+ }
 
   // Fetch Products
   useEffect(() => {
@@ -56,7 +68,7 @@ export default function WalkinBillingPage() {
         supabase
           .from('products')
           .select(`
-            id, name, price, stock_quantity, frozen_quantity, brand, image_url, unit_value, unit_metric,
+            id, name, barcode, price, stock_quantity, frozen_quantity, brand, image_url, unit_value, unit_metric,
             global_categories(name),
             discounts (discount_type, discount_value)
           `)
@@ -155,87 +167,265 @@ export default function WalkinBillingPage() {
     return fuse.search(finalSearchQuery).map(result => result.item);
   }, [searchTerm, products, selectedCategory]);
 
-  const rows = useMemo(() => {
-    return buildBillingRows(filteredProducts, columns)
-  }, [filteredProducts, columns])
+  const rows = useMemo(() => { return buildBillingRows(filteredProducts, columns) }, [filteredProducts, columns])
 
+  const productsById = useMemo( () => new Map(products.map(product => [product.id, product])), [products] )
   const cartItems = Object.values(cart)
+  const cartUnits = cartItems.reduce( (sum, item) => sum + item.quantity, 0 )
   const totalAmount = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0)
 
   const handleAddToCart = (product: Product, quantity: number) => {
-    setCart(prev => {
-      const newCart = { ...prev }
-      if (quantity <= 0) {
-        delete newCart[product.id]
-      } else {
-        const sellingPrice = product.discounts
-          ? product.discounts.discount_type === 'percent'
-            ? product.price * (1 - product.discounts.discount_value / 100)
-            : product.price - product.discounts.discount_value
-          : product.price
-        
-        newCart[product.id] = {
-          id: product.id,
-          name: product.name,
-          price: sellingPrice,
-          quantity,
-          unit_metric: product.unit_metric,
-          unit_value: product.unit_value,
-          originalPrice: product.price,
-          image_url: product.image_url,
-          brand: product.brand
-        }
+    if (billingLockedRef.current) return
+
+    const availableStock = Math.max(
+      0,
+      Number(product.stock_quantity || 0) -
+      Number(product.frozen_quantity || 0)
+    )
+
+    if (!Number.isFinite(quantity) || quantity > availableStock) return
+
+    const next = { ...cartRef.current }
+
+    if (quantity <= 0) {
+      delete next[product.id]
+    } else {
+      const sellingPrice = product.discounts
+        ? product.discounts.discount_type === 'percent'
+          ? product.price * (1 - product.discounts.discount_value / 100)
+          : product.price - product.discounts.discount_value
+        : product.price
+
+      next[product.id] = {
+        id: product.id,
+        name: product.name,
+        price: sellingPrice,
+        quantity,
+        unit_metric: product.unit_metric,
+        unit_value: product.unit_value,
+        originalPrice: product.price,
+        image_url: product.image_url,
+        brand: product.brand,
       }
-      return newCart
+    }
+
+    commitCart(next)
+  }
+
+  const handleBillQuantityChange = (productId: string, change: -1 | 1) => {
+    if (
+      billingLockedRef.current || checkoutRunningRef.current || isSubmitting || showInvoice
+    ) return
+
+    // Read the latest cart so phone scans and clicks stay in sync.
+    const currentItem = cartRef.current[productId]
+    if (!currentItem) return
+
+    const nextQuantity = currentItem.quantity + change
+
+    if (nextQuantity <= 0) {
+      const next = { ...cartRef.current }
+      delete next[productId]
+      commitCart(next)
+      return
+    }
+
+    // Always allow a reduction, including when loaded stock has decreased.
+    if (change === 1) {
+      const product = productsById.get(productId)
+      if (!product) return
+
+      const availableStock = Math.max(
+        0,
+        Number(product.stock_quantity || 0) - Number(product.frozen_quantity || 0)
+      )
+
+      if (
+        !Number.isFinite(availableStock) || nextQuantity > availableStock
+      ) return
+    }
+
+    // Preserve the price and other details already held in the cart.
+    commitCart({
+      ...cartRef.current,
+      [productId]: { ...currentItem, quantity: nextQuantity, },
     })
   }
 
-  const handleCheckout = async () => {
-    if (!profile?.id || cartItems.length === 0) return;
-    // Validation: Credit requires phone number
-    if (paymentMethod === 'Credit' && (!customerPhone || customerPhone.length < 10)) {
-      alert("Customer Phone Number is mandatory for Credit transactions.");
-      return;
-    }
-    setIsSubmitting(true);
-    
-    try {
-      const result = await createWalkinOrder(profile.id, cartItems, null, customerPhone, paymentMethod);
-      
-      if (result.orderId) {
-        setLastOrderId(result.orderId);
-        setCheckoutCart([...cartItems]);
-
-        // 1. IMMEDIATELY show the dialog so the user isn't stuck loading
-        setShowInvoice(true);
-        setCart({});
-
-        // 2. Generate PDF in the background
-        generateAndUploadInvoice(
-          profile.id,
-          result.orderId,
-          profile.store_name || 'Our Store',
-          cartItems,
-          totalAmount,
-          profile.gstin
-        ).then((url) => {
-          if (url) {
-            setInvoiceUrl(url);
-          }
-        }).catch(err => {
-          console.error("Background PDF generation failed", err);
-        });
-
-      } else {
-        alert("Order Error: " + result.error);
+  const handlePhoneBarcode = (barcode: string): WalkinWebScanResult => {
+    if (billingLockedRef.current) {
+      return {
+        status: 'discarded',
+        message: 'Billing is paused. Scan this item again after checkout.',
       }
-    } catch (err: any) {
-      console.error("Checkout failed:", err);
-      alert("Something went wrong during checkout.");
-    } finally {
-      setIsSubmitting(false);
     }
-  };
+
+    const matches = products.filter(
+      product => product.barcode?.trim() === barcode.trim()
+    )
+
+    if (matches.length > 1) {
+      return {
+        status: 'duplicate',
+        message: 'Multiple store products use this barcode. Search manually.',
+      }
+    }
+
+    const product = matches[0]
+
+    if (!product) {
+      return {
+        status: 'not_found',
+        message: 'Barcode not found in your store. Search manually.',
+      }
+    }
+
+    const currentQuantity = cartRef.current[product.id]?.quantity || 0
+    const nextQuantity = currentQuantity + 1
+
+    const availableStock = Math.max(
+      0,
+      Number(product.stock_quantity || 0) -
+      Number(product.frozen_quantity || 0)
+    )
+
+    if (nextQuantity > availableStock) {
+      return {
+        status: 'stock_limit',
+        message: `Only ${availableStock} units available for ${product.name}.`,
+      }
+    }
+
+    handleAddToCart(product, nextQuantity)
+
+    return {
+      status: 'added',
+      message: `${product.name} · Qty ${nextQuantity}`,
+    }
+  }
+
+  const resumePhoneScanner = async () => {
+    try {
+      await scannerRef.current?.resume()
+      setScannerResumeFailed(false)
+    } catch (error) {
+      console.error('[Walkin Scanner] Resume failed:', error)
+      setScannerResumeFailed(true)
+    }
+  }
+
+  const clearCurrentCart = async () => {
+    if (checkoutRunningRef.current || billingLockedRef.current) return
+
+    try {
+      await scannerRef.current?.pause()
+      commitCart({})
+      await resumePhoneScanner()
+    } catch (error) {
+      console.error('[Walkin Scanner] Clear cart failed:', error)
+      alert('Could not pause the scanner. Cart was not cleared. Please retry.')
+    }
+  }
+
+  const handleCheckout = async () => {
+    if (
+      !profile?.id ||
+      checkoutRunningRef.current ||
+      billingLockedRef.current
+    ) return
+
+    if (
+      paymentMethod === 'Credit' &&
+      !/^\d{10}$/.test(customerPhone)
+    ) {
+      alert('Customer Phone Number is mandatory for Credit transactions.')
+      return
+    }
+
+    checkoutRunningRef.current = true
+    setIsSubmitting(true)
+
+    let orderCompleted = false
+
+    try {
+      // Pause server acceptance and finish all previously accepted scans.
+      await scannerRef.current?.pause()
+
+      billingLockedRef.current = true
+
+      const finalCart = Object.values(cartRef.current)
+
+      if (finalCart.length === 0) {
+        alert('Add at least one item before generating a bill.')
+        return
+      }
+
+      const finalTotal = finalCart.reduce(
+        (sum, item) => sum + item.price * item.quantity,
+        0
+      )
+
+      const result = await createWalkinOrder(
+        profile.id,
+        finalCart,
+        null,
+        customerPhone,
+        paymentMethod
+      )
+
+      if (!result.orderId) {
+        throw new Error(result.error || 'Could not create bill.')
+      }
+
+      orderCompleted = true
+
+      setLastOrderId(result.orderId)
+      setCheckoutCart([...finalCart])
+      setInvoiceUrl(null)
+      commitCart({})
+      setShowInvoice(true)
+
+      // Keep the loaded stock consistent with this completed sale.
+      setProducts(previous => previous.map(product => {
+        const sold = finalCart.find(item => item.id === product.id)
+
+        return sold
+          ? {
+              ...product,
+              stock_quantity: Math.max(
+                0,
+                Number(product.stock_quantity || 0) - sold.quantity
+              ),
+            }
+          : product
+      }))
+
+      generateAndUploadInvoice(
+        profile.id,
+        result.orderId,
+        profile.store_name || 'Our Store',
+        finalCart,
+        finalTotal,
+        profile.gstin
+      ).then(url => {
+        if (url) setInvoiceUrl(url)
+      }).catch(error => {
+        console.error('Background PDF generation failed', error)
+      })
+    } catch (error: any) {
+      console.error('Checkout failed:', error)
+      alert(error.message || 'Something went wrong during checkout.')
+    } finally {
+      checkoutRunningRef.current = false
+      setIsSubmitting(false)
+
+      // Successful checkout remains paused until the invoice is closed.
+      if (!orderCompleted) {
+        billingLockedRef.current = false
+        await resumePhoneScanner()
+      }
+    }
+  }
 
   useEffect(() => {
     const updateColumns = () => {
@@ -253,16 +443,44 @@ export default function WalkinBillingPage() {
         else setColumns(6)
       }
     }
-
     updateColumns()
     window.addEventListener('resize', updateColumns)
     return () => window.removeEventListener('resize', updateColumns)
   }, [cartItems.length])
 
+  useEffect(() => {
+    if (loading) return
+
+    const element = billingLayoutRef.current
+    if (!element) return
+
+    let frame = 0
+
+    const updateHeight = () => { cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const top = Math.max(0, element.getBoundingClientRect().top)
+        const height = Math.max(0, window.innerHeight - top)
+        const nextHeight = `${height}px`
+        if (element.style.height !== nextHeight) { element.style.height = nextHeight }
+      })
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+    const observer = new ResizeObserver(updateHeight)
+    if (element.parentElement) { observer.observe(element.parentElement) }
+
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updateHeight)
+      observer.disconnect()
+    }
+  }, [loading])
+
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-orange-500" size={40} /></div>
 
   return (
-    <div className="flex h-screen bg-[#F8F9FB] text-gray-900 overflow-hidden gap-1">
+    <div ref={billingLayoutRef} className="flex h-dvh min-h-0 w-full gap-1 overflow-hidden bg-[#F8F9FB] text-gray-900" >
       {/* 1. Fixed Category Sidebar (Unified Design) */}
       <aside className="w-52 flex-shrink-0 flex flex-col sticky top-0 h-screen pt-24 pb-8 z-30 ml-4">
         <div className="bg-white/80 backdrop-blur-md rounded-3xl py-4 flex flex-col gap-1 border border-gray-100 shadow-xl max-h-full overflow-y-auto custom-scrollbar">
@@ -311,7 +529,7 @@ export default function WalkinBillingPage() {
       {/* 2. Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Transparent Header */}
-        <header className="px-8 py-6 flex items-center justify-between gap-8">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-4 xl:px-6">
           <div className="flex items-center gap-4">
             <Link href="/partners/dashboard" className="p-2.5 bg-white shadow-sm rounded-xl flex items-center justify-center hover:bg-orange-50 transition-colors group border border-gray-100">
               <ChevronLeft size={20} className="text-gray-400 group-hover:text-orange-500" />
@@ -324,7 +542,7 @@ export default function WalkinBillingPage() {
             </div>
           </div>
 
-          <div className="flex-1 max-w-xl relative group">
+          <div className="group relative min-w-[220px] flex-1 xl:max-w-xl">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-orange-500 transition-colors" size={20} />
             <input 
               type="text" 
@@ -334,6 +552,24 @@ export default function WalkinBillingPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+
+          <WalkinPhoneScannerPairing
+            ref={scannerRef}
+            disabled={isSubmitting || showInvoice}
+            onBarcode={handlePhoneBarcode}
+            hasCart={cartItems.length > 0}
+          />
+
+          {scannerResumeFailed && (
+            <button
+              type="button"
+              disabled={isSubmitting || showInvoice}
+              onClick={() => void resumePhoneScanner()}
+              className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800"
+            >
+              Scanner paused · Retry resume
+            </button>
+          )}
 
           <Link href="/partners/dashboard/walkin-billing/history" className="flex items-center gap-2 text-gray-400 hover:text-orange-600 font-bold transition-colors bg-white px-4 py-3 rounded-2xl shadow-sm">
             <History size={18} />
@@ -367,196 +603,369 @@ export default function WalkinBillingPage() {
         </div>
       </main>
 
-      {/* 3. Floating-style Cart Sidebar */}
+      {/* Current bill: fixed header/footer, independently scrolling items */}
       {cartItems.length > 0 && (
-        <div className="w-80 lg:w-90 flex flex-shrink-0 flex-col bg-white/80 backdrop-blur-xl border-l border-gray-200 animate-in slide-in-from-right duration-500 z-40">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
-                <ShoppingCart size={20} />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold leading-none">Order</h2>
-                <span className="text-xs text-gray-400 font-medium">{cartItems.length} items added</span>
+        <aside
+          aria-label="Current bill"
+          className="relative z-40 flex h-full min-h-0 w-80 flex-shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white lg:w-[360px]"
+        >
+          {/* Compact bill heading */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-3 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+                <ShoppingCart size={18} />
+              </span>
+
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-slate-900">
+                  Current Bill
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {cartItems.length} products · {cartUnits} units
+                </p>
               </div>
             </div>
-            <button onClick={() => setCart({})} className="text-[10px] font-bold text-gray-400 hover:text-red-500 uppercase tracking-[0.2em] transition-colors">Clear</button>
-          </div>
-          {/* Customer Phone Search - Top Position */}
-          <div className="px-8 py-4 bg-orange-50/50 border-b border-orange-100 relative">
-            <div className="relative group">
-              <label className="text-[10px] font-bold font-black text-orange-500 uppercase tracking-[0.2em] mb-1.5 block ml-1">
-                Customer Phone
-              </label>
-              <div className="relative flex items-center">
-                <span className="absolute left-4 text-xs font-bold text-orange-400 border-r border-orange-200 pr-2">
-                  +91
-                </span>
-                <input
-                  type="tel"
-                  placeholder="Type number..."
-                  className="w-full pl-14 pr-4 py-2.5 border border-orange-100 rounded-xl text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none bg-white transition-all placeholder:font-medium placeholder:text-gray-300"
-                  value={customerPhone}
-                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '');
-                    if (val.length <= 10) {
-                      setCustomerPhone(val);
-                      if (val.length < 3) setShowSuggestions(false);
-                    }
-                  }}
-                />
-              </div>
 
-              {/* Suggestions Dropdown */}
-              {showSuggestions && (
-                <div className="absolute z-[100] left-0 right-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                  {suggestions.map((phone) => (
+            <button
+              type="button"
+              disabled={isSubmitting || showInvoice}
+              onClick={() => void clearCurrentCart()}
+              className="min-h-8 rounded-lg px-2 text-xs font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500 disabled:opacity-40"
+            >
+              Clear bill
+            </button>
+          </div>
+
+          {/* Compact customer field */}
+          <div className="relative z-20 shrink-0 border-b border-slate-100 px-3 py-2.5">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label
+                htmlFor="walkin-customer-phone"
+                className="text-[11px] font-semibold text-slate-600"
+              >
+                Customer phone
+              </label>
+
+              <span
+                className={`text-[10px] ${
+                  paymentMethod === 'Credit'
+                    ? 'font-semibold text-orange-600'
+                    : 'text-slate-400'
+                }`}
+              >
+                {paymentMethod === 'Credit' ? 'Required for credit' : 'Optional'}
+              </span>
+            </div>
+
+            <div className="relative z-20">
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-slate-400">
+                +91
+              </span>
+
+              <input
+                id="walkin-customer-phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={10}
+                placeholder="10-digit mobile number"
+                disabled={isSubmitting || showInvoice}
+                value={customerPhone}
+                onFocus={() =>
+                  suggestions.length > 0 && setShowSuggestions(true)
+                }
+                onChange={event => {
+                  const value = event.target.value.replace(/\D/g, '')
+
+                  if (value.length <= 10) {
+                    setCustomerPhone(value)
+                    if (value.length < 3) setShowSuggestions(false)
+                  }
+                }}
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-11 pr-3 text-sm font-medium tracking-wide text-slate-900 outline-none transition placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:ring-2 focus:ring-orange-100 disabled:opacity-50"
+              />
+
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {suggestions.map(phone => (
                     <button
                       key={phone}
-                      className="w-full px-4 py-3 text-left text-sm font-bold text-gray-700 hover:bg-orange-50 border-b border-gray-50 last:border-none flex items-center justify-between"
+                      type="button"
                       onClick={() => {
-                        setCustomerPhone(phone);
-                        setShowSuggestions(false);
+                        setCustomerPhone(phone)
+                        setShowSuggestions(false)
                       }}
+                      className="flex min-h-10 w-full items-center justify-between gap-2 border-b border-slate-50 px-3 py-2 text-left last:border-0 hover:bg-orange-50"
                     >
-                      <span>{phone}</span>
-                      <span className="text-[10px] text-orange-400 font-medium">Existing Customer</span>
+                      <span className="text-sm font-medium text-slate-800">
+                        {phone}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Recent customer
+                      </span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            {/* Click away listener to close suggestions */}
-            {showSuggestions && <div className="fixed inset-0 z-[90]" onClick={() => setShowSuggestions(false)} />}
+
+            {showSuggestions && (
+              <div
+                aria-hidden="true"
+                className="fixed inset-0 z-10"
+                onClick={() => setShowSuggestions(false)}
+              />
+            )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
-            {cartItems.map(item => (
-              <div key={item.id} className="flex gap-4 items-start group">
-                {/* Product Image */}
-                <div className="relative w-14 h-14 bg-gray-50 rounded-lg flex-shrink-0 overflow-hidden border border-gray-100">
-                  <Image 
-                    src={item.image_url || '/assets/product_fallback.jpg'}
-                    alt={item.name} 
-                    fill 
-                    className="object-contain p-1"
-                  />
-                </div>
+          {/* Only this area scrolls */}
+          <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-3">
+            <div className="divide-y divide-slate-100">
+              {cartItems.map(item => {
+                const product = productsById.get(item.id)
 
-                <div className="flex-1 min-w-0 py-1">
-                    {item.brand && (
-                        <p className="text-[10px] font-medium text-orange-400 uppercase tracking-wider mb-0.5">
-                        {item.brand}
-                        </p>
-                    )}
-                    <p className="font-bold text-[13px] text-gray-800 leading-snug break-words">
-                        {item.name}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5">
-                        <span className="text-[10px] font-semibold text-gray-400 bg-gray-50 px-1 rounded">
-                        {item.unit_value} {item.unit_metric}
-                        </span>
-                        <span className="text-[10px] font-bold text-gray-900">
-                        ₹{item.price.toFixed(2)} 
-                        <span className="text-gray-300 font-normal mx-1">×</span> 
-                        {item.quantity}
-                        </span>
-                    </div>
-                </div>
+                const stockValue = product
+                  ? Math.max(
+                      0,
+                      Number(product.stock_quantity || 0) -
+                      Number(product.frozen_quantity || 0)
+                    )
+                  : null
 
-                <div className="flex flex-col items-end gap-1 ml-2 pt-1">
-                    <p className="font-black text-sm text-gray-900">₹{(item.price * item.quantity).toFixed(2)}</p>
-                    {item.originalPrice && item.originalPrice > item.price && (
-                        <p className="text-[10px] text-green-600 font-bold line-through opacity-70">
-                        ₹{(item.originalPrice * item.quantity).toFixed(2)}
+                const availableStock =
+                  stockValue !== null && Number.isFinite(stockValue)
+                    ? stockValue
+                    : null
+
+                const remainingStock =
+                  availableStock === null
+                    ? null
+                    : Math.max(0, availableStock - item.quantity)
+
+                const controlsDisabled = isSubmitting || showInvoice
+
+                const canIncrease =
+                  availableStock !== null &&
+                  item.quantity + 1 <= availableStock
+
+                const exceedsStock =
+                  availableStock !== null &&
+                  item.quantity > availableStock
+
+                return (
+                  <div key={item.id} className="py-3">
+                    <div className="flex items-start gap-2.5">
+                      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
+                        <Image
+                          src={item.image_url || '/assets/product_fallback.jpg'}
+                          alt={item.name}
+                          fill
+                          sizes="40px"
+                          className="object-contain p-1"
+                        />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words text-[13px] font-semibold leading-[18px] text-slate-800">
+                          {item.name}
                         </p>
-                    )}
-                    <button 
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+                          {item.brand && (
+                            <span className="max-w-full truncate">
+                              {item.brand}
+                            </span>
+                          )}
+
+                          {item.unit_value != null && item.unit_metric && (
+                            <span className="rounded bg-slate-100 px-1 py-0.5">
+                              {item.unit_value} {item.unit_metric}
+                            </span>
+                          )}
+
+                          <span>₹{item.price.toFixed(2)} each</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={controlsDisabled}
                         onClick={() => {
-                        const { [item.id]: _, ...remainingCart } = cart;
-                        setCart(remainingCart);
+                          if (
+                            billingLockedRef.current ||
+                            checkoutRunningRef.current
+                          ) return
+
+                          const next = { ...cartRef.current }
+                          delete next[item.id]
+                          commitCart(next)
                         }}
-                        className="mt-1 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                    >
+                        aria-label={`Remove ${item.name} from bill`}
+                        title="Remove item"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500 disabled:opacity-40"
+                      >
                         <Trash2 size={14} />
-                    </button>
-                </div>
-              </div>
-            ))}
+                      </button>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div
+                        role="group"
+                        aria-label={`Quantity for ${item.name}`}
+                        className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-orange-200 bg-orange-50"
+                      >
+                        <button
+                          type="button"
+                          disabled={controlsDisabled}
+                          onClick={() => handleBillQuantityChange(item.id, -1)}
+                          aria-label={`Decrease quantity of ${item.name}`}
+                          className="flex h-9 w-9 items-center justify-center text-orange-700 transition hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500 disabled:opacity-40"
+                        >
+                          <Minus size={15} strokeWidth={2.5} />
+                        </button>
+
+                        <span className="min-w-8 px-1 text-center text-sm font-bold tabular-nums text-slate-900">
+                          {item.quantity}
+                        </span>
+
+                        <button
+                          type="button"
+                          disabled={controlsDisabled || !canIncrease}
+                          onClick={() => handleBillQuantityChange(item.id, 1)}
+                          aria-label={`Increase quantity of ${item.name}`}
+                          title={
+                            availableStock === null
+                              ? 'Stock information unavailable'
+                              : !canIncrease
+                                ? 'Not enough stock to add another unit'
+                                : 'Add one more'
+                          }
+                          className="flex h-9 w-9 items-center justify-center text-orange-700 transition hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500 disabled:opacity-30"
+                        >
+                          <Plus size={15} strokeWidth={2.5} />
+                        </button>
+                      </div>
+
+                      <div className="min-w-0 text-right">
+                        <p className="break-words text-sm font-bold tabular-nums text-slate-900">
+                          ₹{(item.price * item.quantity).toFixed(2)}
+                        </p>
+
+                        {item.originalPrice != null &&
+                          item.originalPrice > item.price && (
+                            <p className="text-[10px] tabular-nums text-slate-400 line-through">
+                              ₹{(item.originalPrice * item.quantity).toFixed(2)}
+                            </p>
+                          )}
+                      </div>
+                    </div>
+
+                    <p
+                      className={`mt-1.5 text-[10px] leading-4 ${
+                        remainingStock === null
+                          ? 'text-slate-400'
+                          : exceedsStock || remainingStock === 0
+                            ? 'font-medium text-red-600'
+                            : remainingStock < 5
+                              ? 'font-medium text-amber-600'
+                              : 'text-slate-500'
+                      }`}
+                    >
+                      {remainingStock === null
+                        ? 'Stock unavailable'
+                        : exceedsStock
+                          ? 'Quantity exceeds available stock'
+                          : `${remainingStock} left after this bill`}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
-          <div className="px-4 py-4 bg-white border-t border-gray-100">
-            {/* Payment Method Selector Heading */}
-            <div className="flex items-center justify-between mb-1 px-1">
-              <h3 className="text-[12px] font-bold font-black uppercase text-orange-400">Payment Mode</h3>
-              {paymentMethod === 'Credit' && (
-                <div className="group relative">
-                  <Info size={14} className="text-orange-500 cursor-help" />
-                  <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-gray-900 text-white text-[10px] rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-xl z-50 leading-relaxed">
-                    <span className="font-bold text-orange-400 block mb-0.5">Store Responsibility Notice:</span>
-                    Store owners are solely responsible for collecting credit payments. Aiva Stores bears no responsibility for outstanding customer dues.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="mb-4 flex items-center gap-1 bg-gray-50 p-1 rounded-2xl border border-gray-100">
-              {[
-                { id: 'CASH', label: 'Cash', icon: <Banknote size={14} /> },
-                { id: 'UPI', label: 'UPI', icon: <Image src="/assets/google-pay-icon.png" alt="UPI" width={14} height={14} className="object-contain" /> },
-                { id: 'Cards', label: 'Card', icon: <CreditCard size={14} /> },
-                { id: 'Credit', label: 'Credit', icon: null }
-              ].map((method) => (
+          {/* Checkout stays visible below the scrolling item list */}
+          <div className="shrink-0 border-t border-slate-200 bg-white px-3 pb-3 pt-2.5">
+            <div
+              role="group"
+              aria-label="Payment mode"
+              className="grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1"
+            >
+              {(['Cash', 'UPI', 'Cards', 'Credit'] as const).map(method => (
                 <button
-                  key={method.id}
-                  onClick={() => setPaymentMethod(method.id as any)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl transition-all duration-200 ${
-                    paymentMethod === method.id 
-                      ? 'bg-white text-orange-600 shadow-sm ring-1 ring-black/[0.05]' 
-                      : 'text-black-400 hover:text-orange-600'
+                  key={method}
+                  type="button"
+                  disabled={isSubmitting || showInvoice}
+                  aria-pressed={paymentMethod === method}
+                  onClick={() => setPaymentMethod(method)}
+                  className={`flex h-9 items-center justify-center gap-1 rounded-lg text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500 disabled:opacity-40 ${
+                    paymentMethod === method
+                      ? 'bg-white text-orange-700 shadow-sm ring-1 ring-orange-200'
+                      : 'text-slate-500 hover:bg-white/60 hover:text-slate-800'
                   }`}
                 >
-                  <span className={paymentMethod === method.id ? 'opacity-100' : 'opacity-50'}>
-                    {method.icon}
-                  </span>
-                  <span className="text-[10px] font-bold font-black uppercase tracking-regular">{method.label}</span>
+                  {method === 'Cash' && <Banknote size={14} />}
+                  {method === 'Cards' && <CreditCard size={14} />}
+                  {method === 'UPI' && (
+                    <Image
+                      src="/assets/google-pay-icon.png"
+                      alt=""
+                      width={14}
+                      height={14}
+                      className="object-contain"
+                    />
+                  )}
+                  {method === 'Cards' ? 'Card' : method}
                 </button>
               ))}
             </div>
 
-            <div className="mb-2">
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] text-gray-400 font-bold uppercase tracking-widest px-1">
-                  <span>Subtotal</span>
-                  <span>₹{totalAmount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between items-center px-1">
-                  <span className="text-xs font-black text-gray-900 uppercase">Total</span>
-                  <span className="text-3xl font-black text-orange-600 tracking-tighter">₹{totalAmount.toFixed(2)}</span>
-                </div>
+            {paymentMethod === 'Credit' && (
+              <details className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[10px] leading-4 text-amber-800">
+                <summary className="cursor-pointer font-medium">
+                  Credit sale · collection is your responsibility
+                </summary>
+                <p className="mt-1">
+                  Store owners are solely responsible for collecting credit
+                  payments. Aiva Stores bears no responsibility for outstanding
+                  customer dues.
+                </p>
+              </details>
+            )}
+
+            <div className="flex items-end justify-between gap-3 py-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-700">
+                  Total payable
+                </p>
+                <p className="mt-0.5 text-[10px] text-slate-400">
+                  {cartUnits} units · {paymentMethod === 'Cards' ? 'Card' : paymentMethod}
+                </p>
               </div>
+
+              <p className="break-all text-right text-2xl font-bold leading-none tracking-tight tabular-nums text-orange-600">
+                ₹{totalAmount.toFixed(2)}
+              </p>
             </div>
 
             <button
-              disabled={isSubmitting}
+              type="button"
+              disabled={isSubmitting || showInvoice}
               onClick={handleCheckout}
-              className={`w-full font-bold py-3 rounded-xl shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-3 tracking-wide ${
-                paymentMethod === 'Credit' 
-                ? 'bg-orange-600 hover:bg-orange-700 shadow-orange-100 text-white' 
-                : 'bg-gray-900 hover:bg-black shadow-gray-200 text-white'
-              }`}
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isSubmitting ? <Loader2 className="animate-spin" size={24} /> : (
+              {isSubmitting ? (
                 <>
-                  <span className="uppercase text-sm tracking-widest">
-                    {paymentMethod === 'Credit' ? 'Confirm Credit Sale' : 'Generate Bill'}
-                  </span>
+                  <Loader2 size={17} className="animate-spin" />
+                  Generating bill…
                 </>
+              ) : (
+                paymentMethod === 'Credit'
+                  ? 'Confirm Credit Sale'
+                  : 'Generate Bill'
               )}
             </button>
           </div>
-        </div>
+        </aside>
       )}
 
       <InvoiceDialog 
@@ -567,6 +976,8 @@ export default function WalkinBillingPage() {
           setInvoiceUrl(null)
           setSuggestions([])
           setShowSuggestions(false)
+          billingLockedRef.current = false
+          void resumePhoneScanner()
         }}
         orderId={lastOrderId}
         totalAmount={checkoutCart.reduce((sum, item) => sum + (item.price * item.quantity), 0)}

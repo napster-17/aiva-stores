@@ -121,16 +121,32 @@ export const ProductRow = React.memo(({
                 </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-[12px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                  {p.unit_value} {p.unit_metric}
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <span className="text-[12px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                {p.unit_value} {p.unit_metric}
+              </span>
+
+              {p.global_categories?.name && (
+                <span className="text-[10px] text-orange-600 font-medium">
+                  • {p.global_categories.name}
                 </span>
-                {p.global_categories?.name && (
-                  <span className="text-[10px] text-orange-600 font-medium">
-                    • {p.global_categories.name}
-                  </span>
-                )}
+              )}
+            </div>
+
+            {p.display_barcode && (
+              <div className="mt-1.5 flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] font-medium text-gray-400 shrink-0">
+                  Barcode:
+                </span>
+
+                <span
+                  title={p.display_barcode}
+                  className="min-w-0 max-w-full truncate rounded-md border border-orange-100 bg-orange-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-orange-700"
+                >
+                  {p.display_barcode}
+                </span>
               </div>
+            )}
             </div>
           </div>
         </td>

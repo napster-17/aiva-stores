@@ -3,8 +3,8 @@
 //updated with debounce search, fallback, optimistic UI, concurrency
 //removed undo + retry logic for simplicity since undo was not working due to hard delete and retry had potential to cause race conditions and indempotency
 'use client'
-import React, { useState, useEffect } from 'react'
-import { Plus, Package, Trash2, PackageCheck, Loader2, ChevronDown, ChevronRight, Tag, Layers, Search, X, PackageX } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { Plus, Package, Trash2, PackageCheck, Loader2, ChevronDown, ChevronRight, Tag, Layers, Search, X, PackageX, ScanBarcode, PackageSearch, FilePlus2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import Fuse from 'fuse.js'
@@ -24,6 +24,13 @@ export default function PartnerProductManager() {
   const [products, setProducts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+
+  type AddProductMode = 'catalog' | 'scanner' | 'manual'
+
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [addProductMode, setAddProductMode] = useState<AddProductMode>('catalog')
+  const addMenuRef = useRef<HTMLDivElement>(null)
+  const openAddProducts = (mode: AddProductMode) => { setAddProductMode(mode), setAddMenuOpen(false), setIsDrawerOpen(true) }  
   const [isGrouping, setIsGrouping] = useState(false)
   const [groupParentId, setGroupParentId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
@@ -38,6 +45,33 @@ export default function PartnerProductManager() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
+
+  useEffect(() => {
+    if (!addMenuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        addMenuRef.current &&
+        !addMenuRef.current.contains(event.target as Node)
+      ) {
+        setAddMenuOpen(false)
+      }
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setAddMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [addMenuOpen])  
 
   const fetchStoreDiscounts = async () => {
     if (!profile?.id) return
@@ -66,10 +100,85 @@ export default function PartnerProductManager() {
     ])
     if (!prodRes.error) {
       const fetchedProducts = prodRes.data || []
-      setProducts(fetchedProducts)
-      // Auto-expand all parents that have children
-      const parentIds = fetchedProducts
-        .filter(p => fetchedProducts.some(child => child.parent_product_id === p.id))
+      // Resolve barcodes for inventory items that don't have
+      // their own barcode stored in products.barcode.
+      const missingGlobalIds = Array.from(
+        new Set(
+          fetchedProducts
+            .filter(p => !p.barcode && p.global_product_id)
+            .map(p => p.global_product_id as string)
+        )
+      )
+
+      const barcodeByGlobalId = new Map<string, string>()
+
+      if (missingGlobalIds.length > 0) {
+        // Fetch primary global barcodes in batches.
+        const idChunks = [];
+        for (let i = 0; i < missingGlobalIds.length; i += 100) { idChunks.push(missingGlobalIds.slice(i, i + 100)) }
+
+        const globalResults = await Promise.all(
+          idChunks.map(ids =>
+            supabase
+              .from('global_products')
+              .select('id, barcode')
+              .in('id', ids)
+          )
+        )
+
+        for (const result of globalResults) {
+          if (result.error) {
+            console.error('Global barcode fetch failed:', result.error)
+            continue
+          }
+
+          for (const item of result.data || []) { if (item.barcode) { barcodeByGlobalId.set(item.id, item.barcode) } }
+        }
+
+        // For products without a primary barcode, check
+        // the separate global_product_barcodes table.
+        const unresolvedIds = missingGlobalIds.filter( id => !barcodeByGlobalId.has(id) )
+
+        const alternativeChunks = [];
+        for (let i = 0; i < unresolvedIds.length; i += 100) { alternativeChunks.push(unresolvedIds.slice(i, i + 100)) }
+
+        const alternativeResults = await Promise.all(
+          alternativeChunks.map(ids =>
+            supabase
+              .from('global_product_barcodes')
+              .select('global_product_id, barcode, created_at')
+              .in('global_product_id', ids)
+              .order('created_at', { ascending: true })
+              .limit(1000)
+          )
+        )
+
+        for (const result of alternativeResults) {
+          if (result.error) {
+            console.error('Alternative barcode fetch failed:', result.error)
+            continue
+          }
+
+          for (const item of result.data || []) {
+            if (!barcodeByGlobalId.has(item.global_product_id)) { barcodeByGlobalId.set( item.global_product_id, item.barcode ) }
+          }
+        }
+      }
+
+      const resolvedProducts = fetchedProducts.map(p => ({
+        ...p,
+        display_barcode: p.barcode ||
+          (p.global_product_id ? barcodeByGlobalId.get(p.global_product_id) : null) ||
+          null
+      }))
+
+      setProducts(resolvedProducts)
+
+      // Preserve existing automatic parent expansion.
+      const parentIds = resolvedProducts
+        .filter(p =>
+          resolvedProducts.some( child => child.parent_product_id === p.id )
+        )
         .map(p => p.id)
       setExpandedParents(new Set(parentIds))
     }
@@ -364,7 +473,7 @@ export default function PartnerProductManager() {
 
   const fuse = React.useMemo(() => {
     return new Fuse(products, {
-      keys: ['name', 'brand', 'global_categories.name'],
+      keys: ['name', 'brand', 'global_categories.name', 'barcode', 'display_barcode'],
       threshold: 0.3,
       distance: 100,
       ignoreLocation: true,
@@ -526,12 +635,176 @@ export default function PartnerProductManager() {
             )}
           </div>
 
-          <Button 
-            onClick={() => setIsDrawerOpen(true)} 
-            className="bg-white hover:bg-orange-500 text-orange-500 hover:text-white px-6 h-12 rounded-xl border-orange-500 border-2 transition-all hover:scale-[1.02]"
+          {/* Add Products Dropdown */}
+          <div
+            ref={addMenuRef}
+            className="relative z-40"
           >
-            <Plus className="w-5 h-5 mr-2" /> Add Products
-          </Button>
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              aria-controls="add-products-menu"
+              onClick={() => setAddMenuOpen(prev => !prev)}
+              className={`
+                flex h-12 items-center gap-2 rounded-xl
+                border-2 px-5 text-sm font-bold
+                transition-all duration-200
+                focus-visible:outline-none
+                focus-visible:ring-2
+                focus-visible:ring-orange-400
+                focus-visible:ring-offset-2
+                ${
+                  addMenuOpen
+                    ? 'border-orange-500 bg-orange-500 text-white shadow-lg shadow-orange-100'
+                    : 'border-orange-500 bg-white text-orange-600 hover:bg-orange-50'
+                }
+              `}
+            >
+              <Plus size={19} strokeWidth={2.5} />
+
+              <span>Add Products</span>
+
+              <ChevronDown
+                size={16}
+                className={`
+                  ml-1 transition-transform duration-200
+                  ${addMenuOpen ? 'rotate-180' : ''}
+                `}
+              />
+            </button>
+
+            {addMenuOpen && (
+              <div
+                id="add-products-menu"
+                role="menu"
+                aria-label="Add products"
+                className="
+                  absolute right-0 top-full z-50 mt-2
+                  w-[320px] max-w-[calc(100vw-2rem)]
+                  overflow-hidden rounded-2xl
+                  border border-slate-200
+                  bg-white p-2
+                  shadow-[0_20px_60px_-15px_rgba(15,23,42,0.2)]
+                  animate-in fade-in slide-in-from-top-2
+                  duration-150
+                "
+              >
+                <div className="px-3 pb-2 pt-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
+                    Choose how to add
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openAddProducts('catalog')}
+                  className="
+                    group flex w-full items-center gap-3
+                    rounded-xl px-3 py-3 text-left
+                    transition-colors hover:bg-orange-50
+                    focus-visible:bg-orange-50
+                    focus-visible:outline-none
+                  "
+                >
+                  <div className="
+                    flex h-10 w-10 shrink-0 items-center justify-center
+                    rounded-xl bg-orange-50 text-orange-600
+                    group-hover:bg-white
+                  ">
+                    <PackageSearch size={20} />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-bold text-slate-800">
+                      Global Catalog
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Search and import existing products
+                    </p>
+                  </div>
+
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-300 group-hover:text-orange-500"
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openAddProducts('scanner')}
+                  className="
+                    group flex w-full items-center gap-3
+                    rounded-xl px-3 py-3 text-left
+                    transition-colors hover:bg-orange-50
+                    focus-visible:bg-orange-50
+                    focus-visible:outline-none
+                  "
+                >
+                  <div className="
+                    flex h-10 w-10 shrink-0 items-center justify-center
+                    rounded-xl bg-blue-50 text-blue-600
+                    group-hover:bg-white
+                  ">
+                    <ScanBarcode size={20} />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-bold text-slate-800">
+                      Scan Barcodes
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Connect your phone to scan items
+                    </p>
+                  </div>
+
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-300 group-hover:text-orange-500"
+                  />
+                </button>
+
+                <div className="my-1 border-t border-slate-100" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openAddProducts('manual')}
+                  className="
+                    group flex w-full items-center gap-3
+                    rounded-xl px-3 py-3 text-left
+                    transition-colors hover:bg-orange-50
+                    focus-visible:bg-orange-50
+                    focus-visible:outline-none
+                  "
+                >
+                  <div className="
+                    flex h-10 w-10 shrink-0 items-center justify-center
+                    rounded-xl bg-emerald-50 text-emerald-600
+                    group-hover:bg-white
+                  ">
+                    <FilePlus2 size={20} />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-bold text-slate-800">
+                      Add Manually
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Create a product with price and stock
+                    </p>
+                  </div>
+
+                  <ChevronRight
+                    size={16}
+                    className="text-slate-300 group-hover:text-orange-500"
+                  />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -702,7 +975,15 @@ export default function PartnerProductManager() {
         </div>
       </div>
 
-      <AddProductDrawerPartner isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} onSuccess={fetchInventory} />
+      <AddProductDrawerPartner
+        isOpen={isDrawerOpen}
+        mode={addProductMode}
+        onClose={() => {
+          setIsDrawerOpen(false)
+          setAddProductMode('catalog')
+        }}
+        onSuccess={fetchInventory}
+      />
       <StoreDiscountModal 
         isOpen={isStoreDiscountOpen} 
         onClose={() => setIsStoreDiscountOpen(false)} 
